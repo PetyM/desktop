@@ -57,6 +57,7 @@
    */
   .repository-list-item {
     padding: 0 var(--spacing);
+    padding-left: var(--spacing-half);
 
     // Layout the icon and repository name horizontally
     display: flex;
@@ -68,6 +69,57 @@
     // Necessary to limit the width of the repository
     // name and truncate accordingly
     width: 100%;
+
+    // The chevron toggling the visibility of a repository's submodules, and
+    // the equally sized spacer keeping repositories without submodules (and
+    // the submodules themselves) aligned with the ones that have a chevron.
+    .expand-collapse,
+    .expand-collapse-placeholder {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      margin-right: var(--spacing-third);
+    }
+
+    .expand-collapse {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary-color);
+      cursor: pointer;
+
+      .octicon {
+        width: 12px;
+      }
+    }
+
+    // Submodules are indented underneath the repository they belong to
+    &.submodule {
+      padding-left: var(--spacing);
+
+      .name {
+        flex-grow: 1;
+        min-width: 0;
+      }
+
+      .icon-for-repository,
+      .submodule-state {
+        color: var(--text-secondary-color);
+      }
+
+      .submodule-state {
+        @include ellipsis;
+
+        flex-shrink: 0;
+        max-width: 40%;
+        margin-left: var(--spacing-half);
+        font-size: var(--font-size-sm);
+      }
+    }
 
     .icon-for-repository {
       // Some room between the icon and repository name

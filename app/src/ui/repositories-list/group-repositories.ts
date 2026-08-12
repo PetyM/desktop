@@ -13,6 +13,9 @@ import { IAheadBehind } from '../../models/branch'
 import { assertNever } from '../../lib/fatal-error'
 import { isDotCom } from '../../lib/endpoint-capabilities'
 import { Owner } from '../../models/owner'
+import { SubmoduleEntry } from '../../models/submodule'
+import { matchExistingRepository } from '../../lib/repository-matching'
+import * as Path from 'path'
 
 export type RepositoryListGroup =
   | {
@@ -52,11 +55,103 @@ export type Repositoryish = Repository | CloningRepository
 export interface IRepositoryListItem extends IFilterListItem {
   readonly text: ReadonlyArray<string>
   readonly id: string
-  readonly repository: Repositoryish
+  /**
+   * The repository this item represents, or null for a submodule which hasn't
+   * been opened (and thereby added to the list of repositories) yet.
+   */
+  readonly repository: Repositoryish | null
   readonly needsDisambiguation: boolean
   readonly aheadBehind: IAheadBehind | null
   readonly changedFilesCount: number
+  /** Set when this item is a submodule of the repository listed above it */
+  readonly submodule?: ISubmoduleListItemData
 }
+
+/** The submodule details of a repository list item */
+export interface ISubmoduleListItemData {
+  /** The repository the submodule belongs to */
+  readonly parent: Repository
+  readonly entry: SubmoduleEntry
+}
+
+/**
+ * Inserts the submodules of the expanded repositories into the given groups,
+ * directly below the repository they belong to.
+ */
+export function insertSubmoduleItems(
+  groups: ReadonlyArray<
+    IFilterListGroup<IRepositoryListItem, RepositoryListGroup>
+  >,
+  submodules: ReadonlyMap<number, ReadonlyArray<SubmoduleEntry>>,
+  expandedRepositoryIds: ReadonlySet<number>,
+  repositories: ReadonlyArray<Repositoryish>,
+  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
+): ReadonlyArray<IFilterListGroup<IRepositoryListItem, RepositoryListGroup>> {
+  return groups.map(group => ({
+    identifier: group.identifier,
+    items: group.items.flatMap(item => {
+      const { repository } = item
+
+      if (
+        !(repository instanceof Repository) ||
+        !expandedRepositoryIds.has(repository.id)
+      ) {
+        return [item]
+      }
+
+      const entries = submodules.get(repository.id) ?? []
+
+      return [
+        item,
+        ...entries.map(entry =>
+          createSubmoduleItem(
+            repository,
+            entry,
+            getGroupKey(group.identifier),
+            repositories,
+            localRepositoryStateLookup
+          )
+        ),
+      ]
+    }),
+  }))
+}
+
+function createSubmoduleItem(
+  parent: Repository,
+  entry: SubmoduleEntry,
+  groupKey: string,
+  repositories: ReadonlyArray<Repositoryish>,
+  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
+): IRepositoryListItem {
+  const repository = matchExistingRepository(
+    repositories.filter((r): r is Repository => r instanceof Repository),
+    submodulePath(parent, entry)
+  )
+
+  const repoState = repository && localRepositoryStateLookup.get(repository.id)
+
+  return {
+    // Prefixed with the group key since the same submodule can show up
+    // in both the `Recent` group and the group of its parent repository.
+    id: `submodule/${groupKey}/${parent.id}/${entry.path}`,
+    text: [entry.path],
+    repository: repository ?? null,
+    needsDisambiguation: false,
+    aheadBehind: repoState?.aheadBehind ?? null,
+    changedFilesCount: repoState?.changedFilesCount ?? 0,
+    submodule: { parent, entry },
+  }
+}
+
+/** The absolute path to the working directory of the given submodule */
+export function submodulePath(parent: Repository, entry: SubmoduleEntry) {
+  return Path.resolve(parent.path, entry.path)
+}
+
+/** Normalizes a path for comparison with other paths */
+export const normalizePath = (path: string) =>
+  __WIN32__ ? Path.normalize(path).toLowerCase() : Path.normalize(path)
 
 const recentRepositoriesThreshold = 7
 

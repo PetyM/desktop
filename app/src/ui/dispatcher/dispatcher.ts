@@ -62,6 +62,7 @@ import { getTipSha } from '../../lib/tip'
 import { Account } from '../../models/account'
 import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
 import { IProject } from '../../models/project'
+import { SubmoduleEntry } from '../../models/submodule'
 import { Author, UnknownAuthor } from '../../models/author'
 import { Branch, IAheadBehind } from '../../models/branch'
 import { BranchesTab } from '../../models/branches-tab'
@@ -880,6 +881,24 @@ export class Dispatcher {
    */
   public setSelectedProject(projectId: number | null): Promise<void> {
     return this.appStore._setSelectedProject(projectId)
+  }
+
+  /** Reload the list of submodules of the given repository. */
+  public refreshSubmodules(
+    repository: Repository | CloningRepository
+  ): Promise<void> {
+    return this.appStore._refreshSubmodules(repository)
+  }
+
+  /**
+   * Open the given submodule of the given repository, adding it to the list of
+   * known repositories if we haven't seen it before.
+   */
+  public openSubmodule(
+    parent: Repository,
+    submodule: SubmoduleEntry
+  ): Promise<void> {
+    return this.appStore._openSubmodule(parent, submodule)
   }
 
   /** Create a new project, optionally containing the given repositories. */

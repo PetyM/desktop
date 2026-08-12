@@ -69,6 +69,7 @@ import { RepoRulesInfo } from '../models/repo-rules'
 import { IAPIRepoRuleset } from './api'
 import { ICustomIntegration } from './custom-integration'
 import { IProject } from '../models/project'
+import { SubmoduleEntry } from '../models/submodule'
 import { Emoji } from './emoji'
 import { IUpdateState } from '../ui/lib/update-store'
 
@@ -123,6 +124,15 @@ export interface IAppState {
    * null when all repositories are shown.
    */
   readonly selectedProjectId: number | null
+
+  /**
+   * The submodules of each repository, keyed by the repository id. Only
+   * contains entries for repositories we've looked at so far.
+   */
+  readonly repositorySubmodules: ReadonlyMap<
+    number,
+    ReadonlyArray<SubmoduleEntry>
+  >
 
   readonly selectedState: PossibleSelections | null
 

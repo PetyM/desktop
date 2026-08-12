@@ -246,6 +246,7 @@ import {
   TerminalOutput,
   HookProgress,
   git,
+  listSubmodules,
 } from '../git'
 import {
   installGlobalLFSFilters,
@@ -296,6 +297,7 @@ import {
   getFloatNumber,
 } from '../local-storage'
 import { compareProjects, IProject } from '../../models/project'
+import { SubmoduleEntry } from '../../models/submodule'
 import { ExternalEditorError, suggestedExternalEditor } from '../editors/shared'
 import { ApiRepositoriesStore } from './api-repositories-store'
 import {
@@ -593,6 +595,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>> =
     new Map<number, ReadonlyArray<number>>()
   private selectedProjectId: number | null = null
+
+  /** The submodules of each repository, keyed by the repository id */
+  private repositorySubmodules: ReadonlyMap<
+    number,
+    ReadonlyArray<SubmoduleEntry>
+  > = new Map<number, ReadonlyArray<SubmoduleEntry>>()
 
   private selectedRepository: Repository | CloningRepository | null = null
 
@@ -1065,6 +1073,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.repositories = updateRepositories
       this.updateRepositorySelectionAfterRepositoriesChanged()
       this.emitUpdate()
+      this.refreshSubmodules(
+        updateRepositories.filter(r => !this.repositorySubmodules.has(r.id))
+      )
     })
 
     this.repositoriesStore.onDidUpdateProjects(() => this.refreshProjects())
@@ -1283,6 +1294,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       projects: this.projects,
       repositoryProjects: this.repositoryProjects,
       selectedProjectId: this.selectedProjectId,
+      repositorySubmodules: this.repositorySubmodules,
       windowState: this.windowState,
       windowZoomFactor: this.windowZoomFactor,
       appIsFocused: this.appIsFocused,
@@ -2239,6 +2251,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     previouslySelectedRepository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
     this._refreshRepository(repository)
+    this.refreshSubmodules([repository])
 
     if (isRepositoryWithGitHubRepository(repository)) {
       // Load issues from the upstream or fork depending
@@ -2458,6 +2471,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.repositories = repositories
 
     this.updateRepositorySelectionAfterRepositoriesChanged()
+    this.refreshSubmodules(repositories)
 
     this.sidebarWidth = constrain(
       getNumber(sidebarWidthConfigKey, defaultSidebarWidth)
@@ -5019,6 +5033,70 @@ export class AppStore extends TypedBaseStore<IAppState> {
     newAlias: string | null
   ): Promise<void> {
     return this.repositoriesStore.updateRepositoryAlias(repository, newAlias)
+  }
+
+  /**
+   * Refresh the list of submodules for the given repositories so that they can
+   * be shown underneath their parent repository in the repository list.
+   */
+  private async refreshSubmodules(repositories: ReadonlyArray<Repository>) {
+    const results = await Promise.all(
+      repositories
+        .filter(r => !r.missing)
+        .map(r =>
+          listSubmodules(r)
+            .catch(e => {
+              log.error(`Unable to list submodules for ${r.path}`, e)
+              return new Array<SubmoduleEntry>()
+            })
+            .then(submodules => [r.id, submodules] as const)
+        )
+    )
+
+    const submodules = new Map(this.repositorySubmodules)
+
+    for (const [id, entries] of results) {
+      submodules.set(id, entries)
+    }
+
+    this.repositorySubmodules = submodules
+    this.emitUpdate()
+  }
+
+  /** This shouldn't be called directly. See `Dispatcher`. */
+  public async _refreshSubmodules(
+    repository: Repository | CloningRepository
+  ): Promise<void> {
+    if (repository instanceof Repository) {
+      await this.refreshSubmodules([repository])
+    }
+  }
+
+  /**
+   * Open the given submodule of the given repository. The submodule is added to
+   * the list of known repositories if we haven't seen it before, which is what
+   * allows us to show its changes, history and branches like any other
+   * repository.
+   *
+   * This shouldn't be called directly. See `Dispatcher`.
+   */
+  public async _openSubmodule(
+    parent: Repository,
+    submodule: SubmoduleEntry
+  ): Promise<void> {
+    const path = Path.resolve(parent.path, submodule.path)
+    const existing = matchExistingRepository(this.repositories, path)
+
+    if (existing !== undefined) {
+      await this._selectRepository(existing)
+      return
+    }
+
+    const [added] = await this._addRepositories([path])
+
+    if (added !== undefined) {
+      await this._selectRepository(added)
+    }
   }
 
   /**

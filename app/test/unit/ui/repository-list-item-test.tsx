@@ -48,6 +48,8 @@ describe('RepositoryListItem', () => {
         matches={noMatches}
         aheadBehind={{ ahead: 2, behind: 1 }}
         changedFilesCount={3}
+        submoduleCount={0}
+        isExpanded={false}
       />
     )
 
@@ -72,6 +74,8 @@ describe('RepositoryListItem', () => {
         matches={noMatches}
         aheadBehind={null}
         changedFilesCount={0}
+        submoduleCount={0}
+        isExpanded={false}
       />
     )
 
@@ -91,6 +95,8 @@ describe('RepositoryListItem', () => {
         matches={noMatches}
         aheadBehind={null}
         changedFilesCount={0}
+        submoduleCount={0}
+        isExpanded={false}
       />
     )
 

@@ -1,9 +1,14 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { groupRepositories } from '../../src/ui/repositories-list/group-repositories'
+import * as Path from 'path'
+import {
+  groupRepositories,
+  insertSubmoduleItems,
+} from '../../src/ui/repositories-list/group-repositories'
 import { Repository, ILocalRepositoryState } from '../../src/models/repository'
 import { CloningRepository } from '../../src/models/cloning-repository'
 import { gitHubRepoFixture } from '../helpers/github-repo-builder'
+import { SubmoduleEntry, SubmoduleStatus } from '../../src/models/submodule'
 
 describe('repository list grouping', () => {
   const repositories: Array<Repository | CloningRepository> = [
@@ -37,19 +42,19 @@ describe('repository list grouping', () => {
     assert.equal(grouped[0].items.length, 1)
 
     let item = grouped[0].items[0]
-    assert.equal(item.repository.path, 'repo2')
+    assert.equal(item.repository?.path, 'repo2')
 
     assert.equal(grouped[1].identifier.kind, 'enterprise')
     assert.equal(grouped[1].items.length, 1)
 
     item = grouped[1].items[0]
-    assert.equal(item.repository.path, 'repo3')
+    assert.equal(item.repository?.path, 'repo3')
 
     assert.equal(grouped[2].identifier.kind, 'other')
     assert.equal(grouped[2].items.length, 1)
 
     item = grouped[2].items[0]
-    assert.equal(item.repository.path, 'repo1')
+    assert.equal(item.repository?.path, 'repo1')
   })
 
   it('sorts repositories alphabetically within each group', () => {
@@ -81,16 +86,16 @@ describe('repository list grouping', () => {
     assert.equal(grouped[0].items.length, 2)
 
     let items = grouped[0].items
-    assert.equal(items[0].repository.path, 'b')
-    assert.equal(items[1].repository.path, 'd')
+    assert.equal(items[0].repository?.path, 'b')
+    assert.equal(items[1].repository?.path, 'd')
 
     assert.equal(grouped[1].identifier.kind, 'other')
     assert.equal(grouped[1].items.length, 3)
 
     items = grouped[1].items
-    assert.equal(items[0].repository.path, 'a')
-    assert.equal(items[1].repository.path, 'c')
-    assert.equal(items[2].repository.path, 'z')
+    assert.equal(items[0].repository?.path, 'a')
+    assert.equal(items[1].repository?.path, 'c')
+    assert.equal(items[2].repository?.path, 'z')
   })
 
   it('only disambiguates Enterprise repositories', () => {
@@ -152,5 +157,73 @@ describe('repository list grouping', () => {
 
     assert.equal(grouped[2].items[1].text[0], 'enterprise-repo')
     assert(grouped[2].items[1].needsDisambiguation)
+  })
+})
+
+describe('repository list submodules', () => {
+  const parent = new Repository(Path.resolve('a', 'parent'), 1, null, false)
+  const entry = new SubmoduleEntry(
+    'c59617b65080863c4ca72c1f191fa1b423b92223',
+    'vendor/lib',
+    'v1.2.0',
+    SubmoduleStatus.Modified
+  )
+  const submodules = new Map([[parent.id, [entry]]])
+  const cache = new Map<number, ILocalRepositoryState>()
+
+  it('lists the submodules of expanded repositories only', () => {
+    const groups = groupRepositories([parent], cache, [])
+
+    assert.equal(
+      insertSubmoduleItems(groups, submodules, new Set(), [parent], cache)[0]
+        .items.length,
+      1
+    )
+
+    const expanded = insertSubmoduleItems(
+      groups,
+      submodules,
+      new Set([parent.id]),
+      [parent],
+      cache
+    )
+
+    assert.equal(expanded[0].items.length, 2)
+    assert.equal(expanded[0].items[1].submodule?.entry, entry)
+    assert.equal(expanded[0].items[1].text[0], 'vendor/lib')
+  })
+
+  it('references the repository of a submodule which has been opened', () => {
+    const submodule = new Repository(
+      Path.resolve('a', 'parent', 'vendor', 'lib'),
+      2,
+      null,
+      false
+    )
+    const groups = groupRepositories([parent], cache, [])
+
+    const [group] = insertSubmoduleItems(
+      groups,
+      submodules,
+      new Set([parent.id]),
+      [parent, submodule],
+      cache
+    )
+
+    assert.equal(group.items[1].repository, submodule)
+  })
+
+  it('has no repository for a submodule which hasn’t been opened', () => {
+    const groups = groupRepositories([parent], cache, [])
+
+    const [group] = insertSubmoduleItems(
+      groups,
+      submodules,
+      new Set([parent.id]),
+      [parent],
+      cache
+    )
+
+    assert.equal(group.items[1].repository, null)
   })
 })

@@ -3406,6 +3406,7 @@ export class App extends React.Component<IAppProps, IAppState> {
         projects={this.state.projects}
         repositoryProjects={this.state.repositoryProjects}
         selectedProjectId={this.state.selectedProjectId}
+        repositorySubmodules={this.state.repositorySubmodules}
         dispatcher={this.props.dispatcher}
       />
     )

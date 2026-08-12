@@ -1,6 +1,6 @@
 import { git, IGitStringExecutionOptions } from './core'
 import { Repository } from '../../models/repository'
-import { SubmoduleEntry } from '../../models/submodule'
+import { SubmoduleEntry, SubmoduleStatus } from '../../models/submodule'
 import { pathExists } from '../path-exists'
 import { executionOptionsWithProgress, IGitOutput } from '../progress'
 import {
@@ -124,6 +124,19 @@ export async function updateSubmodulesAfterOperation<T extends Progress>(
   } as T)
 }
 
+function getSubmoduleStatus(status: string): SubmoduleStatus {
+  switch (status) {
+    case '-':
+      return SubmoduleStatus.NotInitialized
+    case '+':
+      return SubmoduleStatus.Modified
+    case 'U':
+      return SubmoduleStatus.Conflicted
+    default:
+      return SubmoduleStatus.UpToDate
+  }
+}
+
 export async function listSubmodules(
   repository: Repository
 ): Promise<ReadonlyArray<SubmoduleEntry>> {
@@ -187,10 +200,15 @@ export async function listSubmodules(
   // about it if you want to learn more:
   //
   // https://git-scm.com/docs/git-describe
-  const statusRe = /^.([^ ]+) (.+) \((.+?)\)$/gm
+  //
+  // Note that the `git describe` part is missing for submodules which haven't
+  // been initialized, so we treat it as optional here.
+  const statusRe = /^(.)([^ ]+) (.+?)(?: \((.+)\))?$/gm
 
-  for (const [, sha, path, describe] of stdout.matchAll(statusRe)) {
-    submodules.push(new SubmoduleEntry(sha, path, describe))
+  for (const [, status, sha, path, describe] of stdout.matchAll(statusRe)) {
+    submodules.push(
+      new SubmoduleEntry(sha, path, describe ?? '', getSubmoduleStatus(status))
+    )
   }
 
   return submodules
