@@ -2,51 +2,43 @@ import {
   Repository,
   ILocalRepositoryState,
   nameOf,
-  isRepositoryWithGitHubRepository,
-  RepositoryWithGitHubRepository,
 } from '../../models/repository'
 import { CloningRepository } from '../../models/cloning-repository'
-import { getHTMLURL } from '../../lib/api'
-import { caseInsensitiveCompare, compare } from '../../lib/compare'
+import { caseInsensitiveCompare } from '../../lib/compare'
 import { IFilterListGroup, IFilterListItem } from '../lib/filter-list'
 import { IAheadBehind } from '../../models/branch'
 import { assertNever } from '../../lib/fatal-error'
-import { isDotCom } from '../../lib/endpoint-capabilities'
-import { Owner } from '../../models/owner'
 import { SubmoduleEntry } from '../../models/submodule'
 import { matchExistingRepository } from '../../lib/repository-matching'
 import { normalizePath } from '../../lib/path'
 import * as Path from 'path'
+import * as Os from 'os'
 
 export type RepositoryListGroup =
   | {
-      kind: 'recent' | 'other'
+      kind: 'recent'
     }
   | {
-      kind: 'dotcom'
-      owner: Owner
-    }
-  | {
-      kind: 'enterprise'
-      host: string
+      kind: 'folder'
+      /** The absolute path of the folder the group's repositories live in */
+      path: string
     }
 
 /**
  * Returns a unique grouping key (string) for a repository group. Doubles as a
- * case sensitive sorting key (i.e the case sensitive sort order of the keys is
- * the order in which the groups will be displayed in the repository list).
+ * case insensitive sorting key (i.e the case insensitive sort order of the keys
+ * is the order in which the groups will be displayed in the repository list).
  */
 export const getGroupKey = (group: RepositoryListGroup) => {
   const { kind } = group
   switch (kind) {
     case 'recent':
       return `0:recent`
-    case 'dotcom':
-      return `1:dotcom:${group.owner.login}`
-    case 'enterprise':
-      return `2:enterprise:${group.host}`
-    case 'other':
-      return `3:other`
+    case 'folder':
+      // Normalized so that folders which only differ in casing end up in the
+      // same group on Windows, while the group keeps the casing of the first
+      // repository we saw in that folder.
+      return `1:folder:${normalizePath(group.path)}`
     default:
       assertNever(group, `Unknown repository group kind ${kind}`)
   }
@@ -222,17 +214,11 @@ export function getParentPaths(
 
 const recentRepositoriesThreshold = 7
 
-const getHostForRepository = (repo: RepositoryWithGitHubRepository) =>
-  new URL(getHTMLURL(repo.gitHubRepository.endpoint)).host
-
-const getGroupForRepository = (repo: Repositoryish): RepositoryListGroup => {
-  if (repo instanceof Repository && isRepositoryWithGitHubRepository(repo)) {
-    return isDotCom(repo.gitHubRepository.endpoint)
-      ? { kind: 'dotcom', owner: repo.gitHubRepository.owner }
-      : { kind: 'enterprise', host: getHostForRepository(repo) }
-  }
-  return { kind: 'other' }
-}
+/** The folder a repository is grouped by, i.e. the one containing it */
+const getGroupForRepository = (repo: Repositoryish): RepositoryListGroup => ({
+  kind: 'folder',
+  path: Path.dirname(Path.resolve(repo.path)),
+})
 
 type RepoGroupItem = { group: RepositoryListGroup; repos: Repositoryish[] }
 
@@ -265,7 +251,7 @@ export function groupRepositories(
   }
 
   return Array.from(groups)
-    .sort(([xKey], [yKey]) => compare(xKey, yKey))
+    .sort(([xKey], [yKey]) => caseInsensitiveCompare(xKey, yKey))
     .map(([, { group, repos }]) => ({
       identifier: group,
       items: toSortedListItems(
@@ -316,13 +302,10 @@ const toSortedListItems = (
         id: r.id.toString(),
         repository: r,
         needsDisambiguation:
-          // If the repository is in the enterprise group and has a duplicate
-          // name in the group, we need to disambiguate it. We don't have to
-          // disambiguate repositories in the 'dotcom' group because they are
-          // already grouped by owner. If the repository is in the 'recent'
-          // group and has a duplicate name in any group, we need to
-          // disambiguate it.
-          ((groupNames.get(title) ?? 0) > 1 && group.kind === 'enterprise') ||
+          // If the repository has a duplicate name in its folder group, or is
+          // in the 'recent' group and has a duplicate name in any group, we
+          // need to disambiguate it.
+          ((groupNames.get(title) ?? 0) > 1 && group.kind === 'folder') ||
           ((allNames.get(title) ?? 0) > 1 && group.kind === 'recent'),
         aheadBehind: repoState?.aheadBehind ?? null,
         changedFilesCount: repoState?.changedFilesCount ?? 0,
@@ -332,4 +315,69 @@ const toSortedListItems = (
     .sort(({ repository: x }, { repository: y }) =>
       caseInsensitiveCompare(getDisplayTitle(x), getDisplayTitle(y))
     )
+}
+
+const pathSegments = (path: string) => Path.resolve(path).split(Path.sep)
+
+const equalSegments = (x: string, y: string) =>
+  __WIN32__ ? x.toLowerCase() === y.toLowerCase() : x === y
+
+/**
+ * The deepest folder all the given paths live in, or null if they've got
+ * nothing but the root of the file system (or the drive) in common.
+ */
+function getCommonAncestorPath(paths: ReadonlyArray<string>) {
+  const [first, ...rest] = paths.map(pathSegments)
+  let common = first
+
+  for (const segments of rest) {
+    let length = 0
+
+    while (
+      length < common.length &&
+      length < segments.length &&
+      equalSegments(common[length], segments[length])
+    ) {
+      length++
+    }
+
+    common = common.slice(0, length)
+  }
+
+  // The first segment is the root ('' on macOS and Linux, the drive on
+  // Windows), which on its own doesn't say anything about where the
+  // repositories are.
+  return common.length > 1 ? common.join(Path.sep) : null
+}
+
+const homeDirectory = Os.homedir()
+
+const shortenHomeDirectory = (path: string) =>
+  path === homeDirectory || path.startsWith(homeDirectory + Path.sep)
+    ? `~${path.slice(homeDirectory.length)}`
+    : path
+
+/**
+ * Produces the label to show for each of the given folders, dropping the part
+ * of the path all of them have in common so that the headers stay short and
+ * tell the folders apart.
+ */
+export function getFolderGroupLabels(
+  folders: ReadonlyArray<string>
+): ReadonlyMap<string, string> {
+  const ancestor = folders.length > 1 ? getCommonAncestorPath(folders) : null
+  const labels = new Map<string, string>()
+
+  for (const folder of folders) {
+    if (ancestor === null) {
+      labels.set(folder, shortenHomeDirectory(folder))
+    } else {
+      // The common ancestor is one of the folders itself when the repositories
+      // of one group live inside the folder of another one.
+      const relative = Path.relative(ancestor, folder)
+      labels.set(folder, relative.length > 0 ? relative : Path.basename(folder))
+    }
+  }
+
+  return labels
 }

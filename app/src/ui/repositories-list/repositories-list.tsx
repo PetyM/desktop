@@ -10,6 +10,7 @@ import {
   getParentPaths,
   getSubmodulePaths,
   insertSubmoduleItems,
+  getFolderGroupLabels,
 } from './group-repositories'
 import { IFilterListGroup } from '../lib/filter-list'
 import { IMatches } from '../../lib/fuzzy-find'
@@ -28,7 +29,6 @@ import { KeyboardShortcut } from '../keyboard-shortcut/keyboard-shortcut'
 import { generateRepositoryListContextMenu } from '../repositories-list/repository-list-item-context-menu'
 import { enableWorktreeSupport } from '../../lib/feature-flag'
 import { SectionFilterList } from '../lib/section-filter-list'
-import { assertNever } from '../../lib/fatal-error'
 import { IAheadBehind } from '../../models/branch'
 import { IProject } from '../../models/project'
 import { ProjectSwitcher } from './project-switcher'
@@ -163,6 +163,26 @@ export class RepositoriesList extends React.Component<
             recentRepositories
           )
   )
+
+  /**
+   * A memoized function for labelling the folder groups, kept around between
+   * renders so that `renderGroupHeader` can look up the label of a group by its
+   * identifier alone.
+   */
+  private getGroupLabels = memoizeOne(
+    (
+      groups: ReadonlyArray<
+        IFilterListGroup<IRepositoryListItem, RepositoryListGroup>
+      >
+    ) =>
+      getFolderGroupLabels(
+        groups.flatMap(({ identifier: g }) =>
+          g.kind === 'folder' ? [g.path] : []
+        )
+      )
+  )
+
+  private groupLabels: ReadonlyMap<string, string> = new Map()
 
   /**
    * A memoized function for finding the selected list item based
@@ -372,18 +392,9 @@ export class RepositoriesList extends React.Component<
   }
 
   private getGroupLabel(group: RepositoryListGroup) {
-    const { kind } = group
-    if (kind === 'enterprise') {
-      return group.host
-    } else if (kind === 'other') {
-      return 'Other'
-    } else if (kind === 'dotcom') {
-      return group.owner.login
-    } else if (kind === 'recent') {
-      return 'Recent'
-    } else {
-      assertNever(kind, `Unknown repository group kind ${kind}`)
-    }
+    return group.kind === 'recent'
+      ? 'Recent'
+      : this.groupLabels.get(group.path) ?? group.path
   }
 
   private renderGroupHeader = (group: RepositoryListGroup) => {
@@ -503,6 +514,8 @@ export class RepositoriesList extends React.Component<
     const selectedItem =
       this.state.selectedItem ??
       this.getSelectedListItem(groups, this.props.selectedRepository)
+
+    this.groupLabels = this.getGroupLabels(groups)
 
     return (
       <div className="repository-list">
