@@ -297,7 +297,8 @@ import {
   getFloatNumber,
 } from '../local-storage'
 import { compareProjects, IProject } from '../../models/project'
-import { SubmoduleEntry } from '../../models/submodule'
+import { SubmoduleEntry, SubmoduleStatus } from '../../models/submodule'
+import { normalizePath } from '../path'
 import { ExternalEditorError, suggestedExternalEditor } from '../editors/shared'
 import { ApiRepositoriesStore } from './api-repositories-store'
 import {
@@ -598,9 +599,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** The submodules of each repository, keyed by the repository id */
   private repositorySubmodules: ReadonlyMap<
-    number,
+    string,
     ReadonlyArray<SubmoduleEntry>
-  > = new Map<number, ReadonlyArray<SubmoduleEntry>>()
+  > = new Map<string, ReadonlyArray<SubmoduleEntry>>()
 
   private selectedRepository: Repository | CloningRepository | null = null
 
@@ -1074,7 +1075,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.updateRepositorySelectionAfterRepositoriesChanged()
       this.emitUpdate()
       this.refreshSubmodules(
-        updateRepositories.filter(r => !this.repositorySubmodules.has(r.id))
+        updateRepositories
+          .filter(
+            r =>
+              !r.missing &&
+              !this.repositorySubmodules.has(normalizePath(r.path))
+          )
+          .map(r => r.path)
       )
     })
 
@@ -2251,7 +2258,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     previouslySelectedRepository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
     this._refreshRepository(repository)
-    this.refreshSubmodules([repository])
+    this._refreshSubmodules(repository.path)
 
     if (isRepositoryWithGitHubRepository(repository)) {
       // Load issues from the upstream or fork depending
@@ -2471,7 +2478,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.repositories = repositories
 
     this.updateRepositorySelectionAfterRepositoriesChanged()
-    this.refreshSubmodules(repositories)
+    this.refreshSubmodules(
+      repositories.filter(r => !r.missing).map(r => r.path)
+    )
 
     this.sidebarWidth = constrain(
       getNumber(sidebarWidthConfigKey, defaultSidebarWidth)
@@ -5036,55 +5045,59 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /**
-   * Refresh the list of submodules for the given repositories so that they can
-   * be shown underneath their parent repository in the repository list.
+   * Refresh the list of submodules at each of the given paths so that they can
+   * be shown underneath the repository (or submodule) they belong to in the
+   * repository list.
    */
-  private async refreshSubmodules(repositories: ReadonlyArray<Repository>) {
+  private async refreshSubmodules(paths: ReadonlyArray<string>) {
     const results = await Promise.all(
-      repositories
-        .filter(r => !r.missing)
-        .map(r =>
-          listSubmodules(r)
-            .catch(e => {
-              log.error(`Unable to list submodules for ${r.path}`, e)
-              return new Array<SubmoduleEntry>()
-            })
-            .then(submodules => [r.id, submodules] as const)
-        )
+      paths.map(path =>
+        listSubmodules(new Repository(path, -1, null, false))
+          .catch(e => {
+            log.error(`Unable to list submodules for ${path}`, e)
+            return new Array<SubmoduleEntry>()
+          })
+          .then(submodules => [normalizePath(path), submodules] as const)
+      )
     )
 
     const submodules = new Map(this.repositorySubmodules)
 
-    for (const [id, entries] of results) {
-      submodules.set(id, entries)
+    for (const [path, entries] of results) {
+      submodules.set(path, entries)
     }
 
     this.repositorySubmodules = submodules
     this.emitUpdate()
   }
 
-  /** This shouldn't be called directly. See `Dispatcher`. */
-  public async _refreshSubmodules(
-    repository: Repository | CloningRepository
-  ): Promise<void> {
-    if (repository instanceof Repository) {
-      await this.refreshSubmodules([repository])
-    }
-  }
-
   /**
-   * Open the given submodule of the given repository. The submodule is added to
-   * the list of known repositories if we haven't seen it before, which is what
-   * allows us to show its changes, history and branches like any other
-   * repository.
+   * Refresh the list of submodules at the given path along with the list of
+   * submodules of each of those submodules. The extra level is what lets us
+   * tell whether a submodule can be expanded before the user tries to.
    *
    * This shouldn't be called directly. See `Dispatcher`.
    */
-  public async _openSubmodule(
-    parent: Repository,
-    submodule: SubmoduleEntry
-  ): Promise<void> {
-    const path = Path.resolve(parent.path, submodule.path)
+  public async _refreshSubmodules(path: string): Promise<void> {
+    await this.refreshSubmodules([path])
+
+    const entries = this.repositorySubmodules.get(normalizePath(path)) ?? []
+
+    await this.refreshSubmodules(
+      entries
+        .filter(entry => entry.status !== SubmoduleStatus.NotInitialized)
+        .map(entry => Path.resolve(path, entry.path))
+    )
+  }
+
+  /**
+   * Open the submodule at the given path. The submodule is added to the list of
+   * known repositories if we haven't seen it before, which is what allows us to
+   * show its changes, history and branches like any other repository.
+   *
+   * This shouldn't be called directly. See `Dispatcher`.
+   */
+  public async _openSubmodule(path: string): Promise<void> {
     const existing = matchExistingRepository(this.repositories, path)
 
     if (existing !== undefined) {

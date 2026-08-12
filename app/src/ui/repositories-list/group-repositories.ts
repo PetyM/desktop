@@ -15,6 +15,7 @@ import { isDotCom } from '../../lib/endpoint-capabilities'
 import { Owner } from '../../models/owner'
 import { SubmoduleEntry } from '../../models/submodule'
 import { matchExistingRepository } from '../../lib/repository-matching'
+import { normalizePath } from '../../lib/path'
 import * as Path from 'path'
 
 export type RepositoryListGroup =
@@ -69,24 +70,79 @@ export interface IRepositoryListItem extends IFilterListItem {
 
 /** The submodule details of a repository list item */
 export interface ISubmoduleListItemData {
-  /** The repository the submodule belongs to */
-  readonly parent: Repository
+  /** The path of the repository or submodule the submodule belongs to */
+  readonly parentPath: string
+
+  /** The absolute path of the submodule's working directory */
+  readonly path: string
+
   readonly entry: SubmoduleEntry
+
+  /** How many submodules deep this submodule is nested, starting at zero */
+  readonly depth: number
+
+  /** The number of submodules of this submodule, as far as we know */
+  readonly submoduleCount: number
 }
 
 /**
- * Inserts the submodules of the expanded repositories into the given groups,
- * directly below the repository they belong to.
+ * Inserts the submodules of the expanded repositories (and of the expanded
+ * submodules of those repositories, and so on) into the given groups, directly
+ * below the repository or submodule they belong to.
+ *
+ * @param submodules     The submodules of each repository and submodule we've
+ *                       looked at so far, keyed by normalized path
+ * @param expandedPaths  The normalized paths of the repositories and submodules
+ *                       whose submodules should be listed
  */
 export function insertSubmoduleItems(
   groups: ReadonlyArray<
     IFilterListGroup<IRepositoryListItem, RepositoryListGroup>
   >,
-  submodules: ReadonlyMap<number, ReadonlyArray<SubmoduleEntry>>,
-  expandedRepositoryIds: ReadonlySet<number>,
+  submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>,
+  expandedPaths: ReadonlySet<string>,
   repositories: ReadonlyArray<Repositoryish>,
   localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
 ): ReadonlyArray<IFilterListGroup<IRepositoryListItem, RepositoryListGroup>> {
+  const knownRepositories = repositories.filter(
+    (r): r is Repository => r instanceof Repository
+  )
+
+  const createItems = (
+    parentPath: string,
+    groupKey: string,
+    depth: number
+  ): ReadonlyArray<IRepositoryListItem> =>
+    (submodules.get(normalizePath(parentPath)) ?? []).flatMap(entry => {
+      const path = Path.resolve(parentPath, entry.path)
+      const repository = matchExistingRepository(knownRepositories, path)
+
+      const repoState =
+        repository && localRepositoryStateLookup.get(repository.id)
+
+      const item: IRepositoryListItem = {
+        // Prefixed with the group key since the same submodule can show up in
+        // both the `Recent` group and the group of its parent repository.
+        id: `submodule/${groupKey}/${path}`,
+        text: [entry.path],
+        repository: repository ?? null,
+        needsDisambiguation: false,
+        aheadBehind: repoState?.aheadBehind ?? null,
+        changedFilesCount: repoState?.changedFilesCount ?? 0,
+        submodule: {
+          parentPath,
+          path,
+          entry,
+          depth,
+          submoduleCount: (submodules.get(normalizePath(path)) ?? []).length,
+        },
+      }
+
+      return expandedPaths.has(normalizePath(path))
+        ? [item, ...createItems(path, groupKey, depth + 1)]
+        : [item]
+    })
+
   return groups.map(group => ({
     identifier: group.identifier,
     items: group.items.flatMap(item => {
@@ -94,64 +150,70 @@ export function insertSubmoduleItems(
 
       if (
         !(repository instanceof Repository) ||
-        !expandedRepositoryIds.has(repository.id)
+        !expandedPaths.has(normalizePath(repository.path))
       ) {
         return [item]
       }
 
-      const entries = submodules.get(repository.id) ?? []
-
       return [
         item,
-        ...entries.map(entry =>
-          createSubmoduleItem(
-            repository,
-            entry,
-            getGroupKey(group.identifier),
-            repositories,
-            localRepositoryStateLookup
-          )
-        ),
+        ...createItems(repository.path, getGroupKey(group.identifier), 0),
       ]
     }),
   }))
 }
 
-function createSubmoduleItem(
-  parent: Repository,
-  entry: SubmoduleEntry,
-  groupKey: string,
-  repositories: ReadonlyArray<Repositoryish>,
-  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
-): IRepositoryListItem {
-  const repository = matchExistingRepository(
-    repositories.filter((r): r is Repository => r instanceof Repository),
-    submodulePath(parent, entry)
-  )
+/**
+ * The normalized paths of all submodules we know about, at any level of
+ * nesting, so that they can be excluded from the list of top-level
+ * repositories.
+ */
+export function getSubmodulePaths(
+  submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>
+): ReadonlySet<string> {
+  const paths = new Set<string>()
 
-  const repoState = repository && localRepositoryStateLookup.get(repository.id)
+  for (const [parentPath, entries] of submodules) {
+    for (const entry of entries) {
+      paths.add(normalizePath(Path.resolve(parentPath, entry.path)))
+    }
+  }
 
-  return {
-    // Prefixed with the group key since the same submodule can show up
-    // in both the `Recent` group and the group of its parent repository.
-    id: `submodule/${groupKey}/${parent.id}/${entry.path}`,
-    text: [entry.path],
-    repository: repository ?? null,
-    needsDisambiguation: false,
-    aheadBehind: repoState?.aheadBehind ?? null,
-    changedFilesCount: repoState?.changedFilesCount ?? 0,
-    submodule: { parent, entry },
+  return paths
+}
+
+/**
+ * Returns the normalized paths of all repositories and submodules which need to
+ * be expanded in order for the given path to be visible in the list.
+ */
+export function getParentPaths(
+  submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>,
+  path: string
+): ReadonlyArray<string> {
+  const parents = new Array<string>()
+  let needle = normalizePath(path)
+
+  // Submodules can't contain themselves so the chain is guaranteed to be
+  // finite, but the map is built from what's on disk so let's not take any
+  // chances.
+  const seen = new Set<string>([needle])
+
+  while (true) {
+    const parent = [...submodules].find(([parentPath, entries]) =>
+      entries.some(
+        entry => normalizePath(Path.resolve(parentPath, entry.path)) === needle
+      )
+    )
+
+    if (parent === undefined || seen.has(normalizePath(parent[0]))) {
+      return parents
+    }
+
+    needle = normalizePath(parent[0])
+    seen.add(needle)
+    parents.push(needle)
   }
 }
-
-/** The absolute path to the working directory of the given submodule */
-export function submodulePath(parent: Repository, entry: SubmoduleEntry) {
-  return Path.resolve(parent.path, entry.path)
-}
-
-/** Normalizes a path for comparison with other paths */
-export const normalizePath = (path: string) =>
-  __WIN32__ ? Path.normalize(path).toLowerCase() : Path.normalize(path)
 
 const recentRepositoriesThreshold = 7
 

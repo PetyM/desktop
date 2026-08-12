@@ -97,9 +97,10 @@
       }
     }
 
-    // Submodules are indented underneath the repository they belong to
+    // Submodules are indented underneath the repository, or submodule, they
+    // belong to. The nesting depth is set as a custom property on the element.
     &.submodule {
-      padding-left: var(--spacing);
+      padding-left: calc(var(--spacing) + var(--submodule-depth, 0) * var(--spacing));
 
       .name {
         flex-grow: 1;

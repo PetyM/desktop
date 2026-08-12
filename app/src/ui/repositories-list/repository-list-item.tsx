@@ -1,4 +1,5 @@
 import * as React from 'react'
+import * as Path from 'path'
 
 import { Repository } from '../../models/repository'
 import { Octicon, iconForRepository } from '../octicons'
@@ -42,8 +43,11 @@ interface IRepositoryListItemProps {
   /** Whether or not the submodules of this repository are shown */
   readonly isExpanded: boolean
 
-  /** Called when the user wants to show or hide the submodules */
-  readonly onToggleExpanded?: (repository: Repository) => void
+  /**
+   * Called with the path of the repository or submodule whose submodules the
+   * user wants to show or hide
+   */
+  readonly onToggleExpanded?: (path: string) => void
 }
 
 /** A repository item. */
@@ -114,9 +118,9 @@ export class RepositoryListItem extends React.Component<
   }
 
   private renderExpandCollapse() {
-    const { repository, submoduleCount, isExpanded } = this.props
+    const { submoduleCount, isExpanded } = this.props
 
-    if (!(repository instanceof Repository) || submoduleCount === 0) {
+    if (this.togglePath === null || submoduleCount === 0) {
       // Rendered even when there's nothing to expand so that repositories with
       // and without submodules line up with each other.
       return <div className="expand-collapse-placeholder" />
@@ -148,15 +152,27 @@ export class RepositoryListItem extends React.Component<
   }
 
   private onToggleExpanded = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const { repository, onToggleExpanded } = this.props
-
     // Toggling shouldn't select the repository the submodules belong to
     event.preventDefault()
     event.stopPropagation()
 
-    if (repository instanceof Repository) {
-      onToggleExpanded?.(repository)
+    if (this.togglePath !== null) {
+      this.props.onToggleExpanded?.(this.togglePath)
     }
+  }
+
+  /**
+   * The path whose submodules the chevron shows and hides, or null when this
+   * item can't have any submodules of its own.
+   */
+  private get togglePath(): string | null {
+    const { repository, submodule } = this.props
+
+    if (submodule !== undefined) {
+      return submodule.path
+    }
+
+    return repository instanceof Repository ? repository.path : null
   }
 
   private renderSubmodule(submodule: ISubmoduleListItemData) {
@@ -165,12 +181,16 @@ export class RepositoryListItem extends React.Component<
     const hasChanges = this.props.changedFilesCount > 0
 
     return (
-      <div className="repository-list-item submodule" ref={this.listItemRef}>
+      <div
+        className="repository-list-item submodule"
+        ref={this.listItemRef}
+        style={{ '--submodule-depth': submodule.depth } as React.CSSProperties}
+      >
         <Tooltip target={this.listItemRef}>
           {this.renderSubmoduleTooltip(submodule)}
         </Tooltip>
 
-        <div className="expand-collapse-placeholder" />
+        {this.renderExpandCollapse()}
 
         <Octicon
           className="icon-for-repository"
@@ -200,7 +220,7 @@ export class RepositoryListItem extends React.Component<
   }
 
   private renderSubmoduleTooltip(submodule: ISubmoduleListItemData) {
-    const { entry, parent } = submodule
+    const { entry, parentPath } = submodule
 
     return (
       <>
@@ -211,7 +231,7 @@ export class RepositoryListItem extends React.Component<
           {entry.sha} {entry.describe && `(${entry.describe})`}
         </div>
         <div>{describeSubmoduleStatus(entry.status)}</div>
-        <div>Submodule of {parent.name}</div>
+        <div>Submodule of {Path.basename(parentPath)}</div>
       </>
     )
   }

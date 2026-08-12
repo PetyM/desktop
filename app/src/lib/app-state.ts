@@ -126,11 +126,12 @@ export interface IAppState {
   readonly selectedProjectId: number | null
 
   /**
-   * The submodules of each repository, keyed by the repository id. Only
-   * contains entries for repositories we've looked at so far.
+   * The submodules of each repository (and of each of their submodules, and so
+   * on), keyed by the normalized path of the repository or submodule they
+   * belong to. Only contains entries for the paths we've looked at so far.
    */
   readonly repositorySubmodules: ReadonlyMap<
-    number,
+    string,
     ReadonlyArray<SubmoduleEntry>
   >
 

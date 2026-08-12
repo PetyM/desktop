@@ -11,6 +11,15 @@ export const encodePathAsUrl = (...pathSegments: string[]) =>
   pathToFileURL(Path.resolve(...pathSegments)).toString()
 
 /**
+ * Normalizes a path such that it can be compared to other normalized paths.
+ *
+ * Windows is guaranteed to be case-insensitive so we can be a bit less strict
+ * there.
+ */
+export const normalizePath = (path: string) =>
+  __WIN32__ ? Path.normalize(path).toLowerCase() : Path.normalize(path)
+
+/**
  * Resolve one or more path sequences into an absolute path underneath
  * or at the given root path.
  *

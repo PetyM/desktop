@@ -62,7 +62,6 @@ import { getTipSha } from '../../lib/tip'
 import { Account } from '../../models/account'
 import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
 import { IProject } from '../../models/project'
-import { SubmoduleEntry } from '../../models/submodule'
 import { Author, UnknownAuthor } from '../../models/author'
 import { Branch, IAheadBehind } from '../../models/branch'
 import { BranchesTab } from '../../models/branches-tab'
@@ -883,22 +882,20 @@ export class Dispatcher {
     return this.appStore._setSelectedProject(projectId)
   }
 
-  /** Reload the list of submodules of the given repository. */
-  public refreshSubmodules(
-    repository: Repository | CloningRepository
-  ): Promise<void> {
-    return this.appStore._refreshSubmodules(repository)
+  /**
+   * Reload the list of submodules of the repository (or submodule) at the given
+   * path, along with the list of submodules of each of those submodules.
+   */
+  public refreshSubmodules(path: string): Promise<void> {
+    return this.appStore._refreshSubmodules(path)
   }
 
   /**
-   * Open the given submodule of the given repository, adding it to the list of
-   * known repositories if we haven't seen it before.
+   * Open the submodule at the given path, adding it to the list of known
+   * repositories if we haven't seen it before.
    */
-  public openSubmodule(
-    parent: Repository,
-    submodule: SubmoduleEntry
-  ): Promise<void> {
-    return this.appStore._openSubmodule(parent, submodule)
+  public openSubmodule(path: string): Promise<void> {
+    return this.appStore._openSubmodule(path)
   }
 
   /** Create a new project, optionally containing the given repositories. */

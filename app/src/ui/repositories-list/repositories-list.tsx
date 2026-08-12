@@ -7,9 +7,9 @@ import {
   Repositoryish,
   RepositoryListGroup,
   getGroupKey,
+  getParentPaths,
+  getSubmodulePaths,
   insertSubmoduleItems,
-  normalizePath,
-  submodulePath,
 } from './group-repositories'
 import { IFilterListGroup } from '../lib/filter-list'
 import { IMatches } from '../../lib/fuzzy-find'
@@ -21,7 +21,7 @@ import * as octicons from '../octicons/octicons.generated'
 import { showContextualMenu } from '../../lib/menu-item'
 import { IMenuItem } from '../../lib/menu-item'
 import { PopupType } from '../../models/popup'
-import { encodePathAsUrl } from '../../lib/path'
+import { encodePathAsUrl, normalizePath } from '../../lib/path'
 import { TooltippedContent } from '../lib/tooltipped-content'
 import memoizeOne from 'memoize-one'
 import { KeyboardShortcut } from '../keyboard-shortcut/keyboard-shortcut'
@@ -90,9 +90,12 @@ interface IRepositoriesListProps {
   /** The project the list is filtered by, or null when showing everything */
   readonly selectedProjectId: number | null
 
-  /** The submodules of each repository, keyed by repository id */
+  /**
+   * The submodules of each repository and submodule we've looked at so far,
+   * keyed by the normalized path they belong to
+   */
   readonly repositorySubmodules: ReadonlyMap<
-    number,
+    string,
     ReadonlyArray<SubmoduleEntry>
   >
 
@@ -103,8 +106,11 @@ interface IRepositoriesListState {
   readonly newRepositoryMenuExpanded: boolean
   readonly selectedItem: IRepositoryListItem | null
 
-  /** The repositories whose submodules are currently shown in the list */
-  readonly expandedRepositoryIds: ReadonlySet<number>
+  /**
+   * The normalized paths of the repositories and submodules whose submodules
+   * are currently shown in the list
+   */
+  readonly expandedPaths: ReadonlySet<string>
 }
 
 const RowHeight = 29
@@ -176,34 +182,25 @@ export class RepositoriesList extends React.Component<
   private getGroupsWithSubmodules = memoizeOne(insertSubmoduleItems)
 
   /**
-   * A memoized function expanding, in addition to the repositories the user has
-   * expanded, the repository owning the selected repository (if any) so that
-   * the selected repository is always visible in the list.
+   * A memoized function expanding, in addition to the repositories and
+   * submodules the user has expanded, everything owning the selected repository
+   * so that the selected repository is always visible in the list.
    */
-  private getExpandedRepositoryIds = memoizeOne(
+  private getExpandedPaths = memoizeOne(
     (
-      expandedRepositoryIds: ReadonlySet<number>,
+      expandedPaths: ReadonlySet<string>,
       selectedRepository: Repositoryish | null,
-      repositories: ReadonlyArray<Repositoryish>,
-      submodules: ReadonlyMap<number, ReadonlyArray<SubmoduleEntry>>
+      submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>
     ) => {
       if (!(selectedRepository instanceof Repository)) {
-        return expandedRepositoryIds
+        return expandedPaths
       }
 
-      const selectedPath = normalizePath(selectedRepository.path)
+      const parents = getParentPaths(submodules, selectedRepository.path)
 
-      const parent = repositories.find(
-        r =>
-          r instanceof Repository &&
-          (submodules.get(r.id) ?? []).some(
-            entry => normalizePath(submodulePath(r, entry)) === selectedPath
-          )
-      )
-
-      return parent === undefined || expandedRepositoryIds.has(parent.id)
-        ? expandedRepositoryIds
-        : new Set([...expandedRepositoryIds, parent.id])
+      return parents.every(p => expandedPaths.has(p))
+        ? expandedPaths
+        : new Set([...expandedPaths, ...parents])
     }
   )
 
@@ -217,25 +214,17 @@ export class RepositoriesList extends React.Component<
       repositories: ReadonlyArray<Repositoryish>,
       repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>>,
       selectedProjectId: number | null,
-      repositorySubmodules: ReadonlyMap<number, ReadonlyArray<SubmoduleEntry>>
+      repositorySubmodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>
     ) => {
       const inSelectedProject = (r: Repositoryish) =>
         selectedProjectId === null ||
         r instanceof CloningRepository ||
         repositoryProjects.get(r.id)?.includes(selectedProjectId) === true
 
-      // Submodules are listed underneath the repository they belong to so we
-      // don't want them showing up as top-level repositories as well, even
-      // though that's how they're stored once they've been opened.
-      const submodulePaths = new Set(
-        repositories.flatMap(r =>
-          r instanceof Repository
-            ? (repositorySubmodules.get(r.id) ?? []).map(entry =>
-                normalizePath(submodulePath(r, entry))
-              )
-            : []
-        )
-      )
+      // Submodules are listed underneath the repository or submodule they
+      // belong to so we don't want them showing up as top-level repositories as
+      // well, even though that's how they're stored once they've been opened.
+      const submodulePaths = getSubmodulePaths(repositorySubmodules)
 
       return repositories.filter(
         r => inSelectedProject(r) && !submodulePaths.has(normalizePath(r.path))
@@ -249,16 +238,23 @@ export class RepositoriesList extends React.Component<
     this.state = {
       newRepositoryMenuExpanded: false,
       selectedItem: null,
-      expandedRepositoryIds: new Set<number>(),
+      expandedPaths: new Set<string>(),
     }
   }
 
   private renderItem = (item: IRepositoryListItem, matches: IMatches) => {
     const { repository, submodule } = item
+    const path = submodule?.path ?? repository?.path ?? null
+
     const submoduleCount =
-      repository instanceof Repository && submodule === undefined
-        ? (this.props.repositorySubmodules.get(repository.id) ?? []).length
-        : 0
+      submodule?.submoduleCount ??
+      (repository instanceof Repository
+        ? (
+            this.props.repositorySubmodules.get(
+              normalizePath(repository.path)
+            ) ?? []
+          ).length
+        : 0)
 
     return (
       <RepositoryListItem
@@ -271,28 +267,31 @@ export class RepositoriesList extends React.Component<
         submodule={submodule}
         submoduleCount={submoduleCount}
         isExpanded={
-          repository !== null &&
-          this.getExpandedRepositoryIds(
-            this.state.expandedRepositoryIds,
+          path !== null &&
+          this.getExpandedPaths(
+            this.state.expandedPaths,
             this.props.selectedRepository,
-            this.props.repositories,
             this.props.repositorySubmodules
-          ).has(repository.id)
+          ).has(normalizePath(path))
         }
         onToggleExpanded={this.onToggleExpanded}
       />
     )
   }
 
-  private onToggleExpanded = (repository: Repository) => {
-    const expandedRepositoryIds = new Set(this.state.expandedRepositoryIds)
+  private onToggleExpanded = (path: string) => {
+    const expandedPaths = new Set(this.state.expandedPaths)
+    const normalized = normalizePath(path)
 
-    if (!expandedRepositoryIds.delete(repository.id)) {
-      expandedRepositoryIds.add(repository.id)
-      this.props.dispatcher.refreshSubmodules(repository)
+    if (!expandedPaths.delete(normalized)) {
+      expandedPaths.add(normalized)
+      // Refreshes the submodules of the thing being expanded along with the
+      // submodules of each of those submodules so that we know which of the
+      // rows about to appear can be expanded in turn.
+      this.props.dispatcher.refreshSubmodules(path)
     }
 
-    this.setState({ expandedRepositoryIds })
+    this.setState({ expandedPaths })
   }
 
   private getAheadBehindTooltip = (aheadBehind: IAheadBehind | null) => {
@@ -416,8 +415,7 @@ export class RepositoriesList extends React.Component<
     } else if (item.submodule !== undefined) {
       // The submodule isn't known to the app yet, opening it adds it to the
       // list of repositories and selects it.
-      const { parent, entry } = item.submodule
-      this.props.dispatcher.openSubmodule(parent, entry)
+      this.props.dispatcher.openSubmodule(item.submodule.path)
     }
   }
 
@@ -479,10 +477,9 @@ export class RepositoriesList extends React.Component<
       this.props.repositorySubmodules
     )
 
-    const expandedRepositoryIds = this.getExpandedRepositoryIds(
-      this.state.expandedRepositoryIds,
+    const expandedPaths = this.getExpandedPaths(
+      this.state.expandedPaths,
       this.props.selectedRepository,
-      this.props.repositories,
       this.props.repositorySubmodules
     )
 
@@ -493,7 +490,7 @@ export class RepositoriesList extends React.Component<
         this.props.recentRepositories
       ),
       this.props.repositorySubmodules,
-      expandedRepositoryIds,
+      expandedPaths,
       this.props.repositories,
       this.props.localRepositoryStateLookup
     )
@@ -534,7 +531,7 @@ export class RepositoriesList extends React.Component<
               repositories,
               filterText: this.props.filterText,
               submodules: this.props.repositorySubmodules,
-              expandedRepositoryIds: this.state.expandedRepositoryIds,
+              expandedPaths: this.state.expandedPaths,
             }}
             onItemContextMenu={this.onItemContextMenu}
             getGroupAriaLabel={this.getGroupAriaLabelGetter(groups)}
