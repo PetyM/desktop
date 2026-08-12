@@ -59,6 +59,9 @@
     padding: 0 var(--spacing);
     padding-left: var(--spacing-half);
 
+    // Anchors the vertical guide line drawn next to nested submodules
+    position: relative;
+
     // Layout the icon and repository name horizontally
     display: flex;
     flex-direction: row;
@@ -97,27 +100,40 @@
       }
     }
 
+    // The branch a repository has checked out, or what a submodule points at.
+    .repository-state {
+      @include ellipsis;
+
+      flex: 0 2 auto;
+      min-width: 0;
+      margin-left: var(--spacing-half);
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary-color);
+    }
+
     // Submodules are indented underneath the repository, or submodule, they
     // belong to. The nesting depth is set as a custom property on the element.
     &.submodule {
       padding-left: calc(var(--spacing) + var(--submodule-depth, 0) * var(--spacing));
 
-      .name {
-        flex-grow: 1;
-        min-width: 0;
+      // A guide line running down the left hand side of each nesting level so
+      // that submodules read as belonging to the row above them rather than as
+      // repositories in their own right.
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: calc(var(--spacing-half) + (var(--submodule-depth, 0) + 0.5) * var(--spacing));
+        border-left: var(--base-border);
       }
 
-      .icon-for-repository,
-      .submodule-state {
+      .name,
+      .icon-for-repository {
         color: var(--text-secondary-color);
       }
 
-      .submodule-state {
-        @include ellipsis;
-
-        flex-shrink: 0;
-        max-width: 40%;
-        margin-left: var(--spacing-half);
+      .name {
         font-size: var(--font-size-sm);
       }
     }
@@ -136,6 +152,10 @@
     .name {
       // Long repository names truncate and ellipse
       @include ellipsis;
+
+      // Takes up whatever space the branch name and the indicators leave over
+      flex: 1 1 auto;
+      min-width: 0;
 
       .prefix {
         color: var(--text-secondary-color);

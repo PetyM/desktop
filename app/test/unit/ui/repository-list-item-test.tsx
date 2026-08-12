@@ -50,6 +50,7 @@ describe('RepositoryListItem', () => {
         changedFilesCount={3}
         submoduleCount={0}
         isExpanded={false}
+        branchName={null}
       />
     )
 
@@ -76,6 +77,7 @@ describe('RepositoryListItem', () => {
         changedFilesCount={0}
         submoduleCount={0}
         isExpanded={false}
+        branchName={null}
       />
     )
 
@@ -97,6 +99,7 @@ describe('RepositoryListItem', () => {
         changedFilesCount={0}
         submoduleCount={0}
         isExpanded={false}
+        branchName={null}
       />
     )
 

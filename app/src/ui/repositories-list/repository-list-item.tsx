@@ -34,6 +34,9 @@ interface IRepositoryListItemProps {
   /** Number of uncommitted changes */
   readonly changedFilesCount: number
 
+  /** The branch currently checked out in the repository, when known */
+  readonly branchName: string | null
+
   /** Set when this item is a submodule of the repository listed above it */
   readonly submodule?: ISubmoduleListItemData
 
@@ -107,6 +110,8 @@ export class RepositoryListItem extends React.Component<
             highlight={this.props.matches.title}
           />
         </div>
+
+        {this.renderState(this.props.branchName)}
 
         {repository instanceof Repository &&
           renderRepoIndicators({
@@ -204,11 +209,9 @@ export class RepositoryListItem extends React.Component<
           />
         </div>
 
-        {entry.status === SubmoduleStatus.NotInitialized ? (
-          <div className="submodule-state">uninitialized</div>
-        ) : (
-          <div className="submodule-state">{entry.describe}</div>
-        )}
+        {entry.status === SubmoduleStatus.NotInitialized
+          ? this.renderState('uninitialized')
+          : this.renderState(this.props.branchName ?? entry.describe)}
 
         {repository !== null &&
           renderRepoIndicators({
@@ -217,6 +220,14 @@ export class RepositoryListItem extends React.Component<
           })}
       </div>
     )
+  }
+
+  /**
+   * Renders the branch a repository has checked out, or what a submodule points
+   * at, to the right of the name.
+   */
+  private renderState(state: string | null) {
+    return state ? <div className="repository-state">{state}</div> : null
   }
 
   private renderSubmoduleTooltip(submodule: ISubmoduleListItemData) {
@@ -266,6 +277,7 @@ export class RepositoryListItem extends React.Component<
       return (
         nextProps.repository.id !== this.props.repository.id ||
         nextProps.matches !== this.props.matches ||
+        nextProps.branchName !== this.props.branchName ||
         nextProps.isExpanded !== this.props.isExpanded ||
         nextProps.submoduleCount !== this.props.submoduleCount ||
         nextProps.submodule?.entry !== this.props.submodule?.entry

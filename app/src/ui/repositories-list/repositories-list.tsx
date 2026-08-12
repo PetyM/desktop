@@ -264,6 +264,7 @@ export class RepositoriesList extends React.Component<
         matches={matches}
         aheadBehind={item.aheadBehind}
         changedFilesCount={item.changedFilesCount}
+        branchName={item.branchName}
         submodule={submodule}
         submoduleCount={submoduleCount}
         isExpanded={

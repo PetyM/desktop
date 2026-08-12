@@ -64,6 +64,8 @@ export interface IRepositoryListItem extends IFilterListItem {
   readonly needsDisambiguation: boolean
   readonly aheadBehind: IAheadBehind | null
   readonly changedFilesCount: number
+  /** The branch currently checked out in the repository, when known */
+  readonly branchName: string | null
   /** Set when this item is a submodule of the repository listed above it */
   readonly submodule?: ISubmoduleListItemData
 }
@@ -131,6 +133,7 @@ export function insertSubmoduleItems(
         needsDisambiguation: false,
         aheadBehind: repoState?.aheadBehind ?? null,
         changedFilesCount: repoState?.changedFilesCount ?? 0,
+        branchName: repoState?.branchName ?? null,
         submodule: {
           parentPath,
           path,
@@ -323,6 +326,7 @@ const toSortedListItems = (
           ((allNames.get(title) ?? 0) > 1 && group.kind === 'recent'),
         aheadBehind: repoState?.aheadBehind ?? null,
         changedFilesCount: repoState?.changedFilesCount ?? 0,
+        branchName: repoState?.branchName ?? null,
       }
     })
     .sort(({ repository: x }, { repository: y }) =>
