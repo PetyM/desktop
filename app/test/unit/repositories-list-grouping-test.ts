@@ -197,7 +197,7 @@ describe('repository list submodules', () => {
 
   const cache = new Map<number, ILocalRepositoryState>()
 
-  const expand = (
+  const collapse = (
     paths: ReadonlyArray<string>,
     repositories: ReadonlyArray<Repository> = [parent]
   ) =>
@@ -209,41 +209,44 @@ describe('repository list submodules', () => {
       cache
     )[0].items
 
-  it('lists the submodules of expanded repositories only', () => {
-    assert.equal(expand([]).length, 1)
+  it('lists the submodules of every level by default', () => {
+    const items = collapse([])
 
-    const items = expand([parentPath])
+    assert.equal(items.length, 3)
 
-    assert.equal(items.length, 2)
     assert.equal(items[1].submodule?.entry, entry)
     assert.equal(items[1].submodule?.depth, 0)
     assert.equal(items[1].text[0], 'vendor/lib')
-  })
 
-  it('lists the submodules of expanded submodules', () => {
-    const items = expand([parentPath, submodulePath])
-
-    assert.equal(items.length, 3)
     assert.equal(items[2].submodule?.entry, nestedEntry)
     assert.equal(items[2].submodule?.path, nestedPath)
     assert.equal(items[2].submodule?.depth, 1)
   })
 
-  it('knows whether a submodule has submodules of its own', () => {
-    const items = expand([parentPath])
+  it('hides the submodules of a collapsed repository', () => {
+    assert.equal(collapse([parentPath]).length, 1)
+  })
 
-    assert.equal(items[1].submodule?.submoduleCount, 1)
+  it('hides the submodules of a collapsed submodule', () => {
+    const items = collapse([submodulePath])
+
+    assert.equal(items.length, 2)
+    assert.equal(items[1].submodule?.entry, entry)
+  })
+
+  it('knows whether a submodule has submodules of its own', () => {
+    assert.equal(collapse([])[1].submodule?.submoduleCount, 1)
   })
 
   it('references the repository of a submodule which has been opened', () => {
     const submodule = new Repository(submodulePath, 2, null, false)
-    const items = expand([parentPath], [parent, submodule])
+    const items = collapse([], [parent, submodule])
 
     assert.equal(items[1].repository, submodule)
   })
 
   it('has no repository for a submodule which hasn’t been opened', () => {
-    assert.equal(expand([parentPath])[1].repository, null)
+    assert.equal(collapse([])[1].repository, null)
   })
 
   it('lists the paths of every known submodule', () => {

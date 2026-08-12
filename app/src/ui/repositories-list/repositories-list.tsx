@@ -108,9 +108,9 @@ interface IRepositoriesListState {
 
   /**
    * The normalized paths of the repositories and submodules whose submodules
-   * are currently shown in the list
+   * the user has hidden. Everything else is expanded.
    */
-  readonly expandedPaths: ReadonlySet<string>
+  readonly collapsedPaths: ReadonlySet<string>
 }
 
 const RowHeight = 29
@@ -176,31 +176,31 @@ export class RepositoriesList extends React.Component<
   private getSelectedListItem = memoizeOne(findMatchingListItem)
 
   /**
-   * A memoized function for adding the submodules of the expanded repositories
-   * to the groups produced by `getRepositoryGroups`.
+   * A memoized function for adding the submodules of the repositories to the
+   * groups produced by `getRepositoryGroups`.
    */
   private getGroupsWithSubmodules = memoizeOne(insertSubmoduleItems)
 
   /**
-   * A memoized function expanding, in addition to the repositories and
-   * submodules the user has expanded, everything owning the selected repository
-   * so that the selected repository is always visible in the list.
+   * A memoized function expanding everything owning the selected repository,
+   * regardless of whether the user has collapsed it, so that the selected
+   * repository is always visible in the list.
    */
-  private getExpandedPaths = memoizeOne(
+  private getCollapsedPaths = memoizeOne(
     (
-      expandedPaths: ReadonlySet<string>,
+      collapsedPaths: ReadonlySet<string>,
       selectedRepository: Repositoryish | null,
       submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>
     ) => {
       if (!(selectedRepository instanceof Repository)) {
-        return expandedPaths
+        return collapsedPaths
       }
 
       const parents = getParentPaths(submodules, selectedRepository.path)
 
-      return parents.every(p => expandedPaths.has(p))
-        ? expandedPaths
-        : new Set([...expandedPaths, ...parents])
+      return parents.some(p => collapsedPaths.has(p))
+        ? new Set([...collapsedPaths].filter(p => !parents.includes(p)))
+        : collapsedPaths
     }
   )
 
@@ -238,7 +238,7 @@ export class RepositoriesList extends React.Component<
     this.state = {
       newRepositoryMenuExpanded: false,
       selectedItem: null,
-      expandedPaths: new Set<string>(),
+      collapsedPaths: new Set<string>(),
     }
   }
 
@@ -268,8 +268,8 @@ export class RepositoriesList extends React.Component<
         submoduleCount={submoduleCount}
         isExpanded={
           path !== null &&
-          this.getExpandedPaths(
-            this.state.expandedPaths,
+          !this.getCollapsedPaths(
+            this.state.collapsedPaths,
             this.props.selectedRepository,
             this.props.repositorySubmodules
           ).has(normalizePath(path))
@@ -280,18 +280,17 @@ export class RepositoriesList extends React.Component<
   }
 
   private onToggleExpanded = (path: string) => {
-    const expandedPaths = new Set(this.state.expandedPaths)
+    const collapsedPaths = new Set(this.state.collapsedPaths)
     const normalized = normalizePath(path)
 
-    if (!expandedPaths.delete(normalized)) {
-      expandedPaths.add(normalized)
-      // Refreshes the submodules of the thing being expanded along with the
-      // submodules of each of those submodules so that we know which of the
-      // rows about to appear can be expanded in turn.
+    if (!collapsedPaths.delete(normalized)) {
+      collapsedPaths.add(normalized)
+    } else {
+      // Picks up any submodules added since we last looked at this one
       this.props.dispatcher.refreshSubmodules(path)
     }
 
-    this.setState({ expandedPaths })
+    this.setState({ collapsedPaths })
   }
 
   private getAheadBehindTooltip = (aheadBehind: IAheadBehind | null) => {
@@ -477,8 +476,8 @@ export class RepositoriesList extends React.Component<
       this.props.repositorySubmodules
     )
 
-    const expandedPaths = this.getExpandedPaths(
-      this.state.expandedPaths,
+    const collapsedPaths = this.getCollapsedPaths(
+      this.state.collapsedPaths,
       this.props.selectedRepository,
       this.props.repositorySubmodules
     )
@@ -490,7 +489,7 @@ export class RepositoriesList extends React.Component<
         this.props.recentRepositories
       ),
       this.props.repositorySubmodules,
-      expandedPaths,
+      collapsedPaths,
       this.props.repositories,
       this.props.localRepositoryStateLookup
     )
@@ -531,7 +530,7 @@ export class RepositoriesList extends React.Component<
               repositories,
               filterText: this.props.filterText,
               submodules: this.props.repositorySubmodules,
-              expandedPaths: this.state.expandedPaths,
+              collapsedPaths: this.state.collapsedPaths,
             }}
             onItemContextMenu={this.onItemContextMenu}
             getGroupAriaLabel={this.getGroupAriaLabelGetter(groups)}

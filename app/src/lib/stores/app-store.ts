@@ -2258,7 +2258,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
     previouslySelectedRepository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
     this._refreshRepository(repository)
-    this._refreshSubmodules(repository.path)
+    this.refreshSubmodules([repository.path])
 
     if (isRepositoryWithGitHubRepository(repository)) {
       // Load issues from the upstream or fork depending
@@ -5045,49 +5045,63 @@ export class AppStore extends TypedBaseStore<IAppState> {
   }
 
   /**
-   * Refresh the list of submodules at each of the given paths so that they can
-   * be shown underneath the repository (or submodule) they belong to in the
-   * repository list.
+   * Refresh the list of submodules at each of the given paths, and of each of
+   * those submodules in turn, so that they can be shown underneath the
+   * repository (or submodule) they belong to in the repository list.
    */
   private async refreshSubmodules(paths: ReadonlyArray<string>) {
-    const results = await Promise.all(
-      paths.map(path =>
-        listSubmodules(new Repository(path, -1, null, false))
-          .catch(e => {
-            log.error(`Unable to list submodules for ${path}`, e)
-            return new Array<SubmoduleEntry>()
-          })
-          .then(submodules => [normalizePath(path), submodules] as const)
+    // Submodules are always nested inside of the thing they belong to so the
+    // walk is guaranteed to terminate, but the paths come from what's on disk
+    // so let's not take any chances.
+    const seen = new Set<string>()
+    let queue = paths
+
+    while (queue.length > 0) {
+      queue = queue.filter(p => !seen.has(normalizePath(p)))
+      queue.forEach(p => seen.add(normalizePath(p)))
+
+      const results = await Promise.all(
+        queue.map(path =>
+          listSubmodules(new Repository(path, -1, null, false))
+            .catch(e => {
+              log.error(`Unable to list submodules for ${path}`, e)
+              return new Array<SubmoduleEntry>()
+            })
+            .then(submodules => [path, submodules] as const)
+        )
       )
-    )
 
-    const submodules = new Map(this.repositorySubmodules)
+      if (results.length === 0) {
+        return
+      }
 
-    for (const [path, entries] of results) {
-      submodules.set(path, entries)
+      const submodules = new Map(this.repositorySubmodules)
+
+      for (const [path, entries] of results) {
+        submodules.set(normalizePath(path), entries)
+      }
+
+      this.repositorySubmodules = submodules
+      this.emitUpdate()
+
+      // Submodules which haven't been initialized don't have anything on disk
+      // for us to look at.
+      queue = results.flatMap(([path, entries]) =>
+        entries
+          .filter(entry => entry.status !== SubmoduleStatus.NotInitialized)
+          .map(entry => Path.resolve(path, entry.path))
+      )
     }
-
-    this.repositorySubmodules = submodules
-    this.emitUpdate()
   }
 
   /**
-   * Refresh the list of submodules at the given path along with the list of
-   * submodules of each of those submodules. The extra level is what lets us
-   * tell whether a submodule can be expanded before the user tries to.
+   * Refresh the list of submodules at the given path, and of each of those
+   * submodules in turn.
    *
    * This shouldn't be called directly. See `Dispatcher`.
    */
   public async _refreshSubmodules(path: string): Promise<void> {
     await this.refreshSubmodules([path])
-
-    const entries = this.repositorySubmodules.get(normalizePath(path)) ?? []
-
-    await this.refreshSubmodules(
-      entries
-        .filter(entry => entry.status !== SubmoduleStatus.NotInitialized)
-        .map(entry => Path.resolve(path, entry.path))
-    )
   }
 
   /**

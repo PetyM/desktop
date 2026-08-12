@@ -86,21 +86,23 @@ export interface ISubmoduleListItemData {
 }
 
 /**
- * Inserts the submodules of the expanded repositories (and of the expanded
- * submodules of those repositories, and so on) into the given groups, directly
- * below the repository or submodule they belong to.
+ * Inserts the submodules of the repositories (and the submodules of those
+ * submodules, and so on) into the given groups, directly below the repository
+ * or submodule they belong to.
  *
- * @param submodules     The submodules of each repository and submodule we've
- *                       looked at so far, keyed by normalized path
- * @param expandedPaths  The normalized paths of the repositories and submodules
- *                       whose submodules should be listed
+ * Everything is expanded unless the user has collapsed it.
+ *
+ * @param submodules      The submodules of each repository and submodule we've
+ *                        looked at so far, keyed by normalized path
+ * @param collapsedPaths  The normalized paths of the repositories and
+ *                        submodules whose submodules should be hidden
  */
 export function insertSubmoduleItems(
   groups: ReadonlyArray<
     IFilterListGroup<IRepositoryListItem, RepositoryListGroup>
   >,
   submodules: ReadonlyMap<string, ReadonlyArray<SubmoduleEntry>>,
-  expandedPaths: ReadonlySet<string>,
+  collapsedPaths: ReadonlySet<string>,
   repositories: ReadonlyArray<Repositoryish>,
   localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
 ): ReadonlyArray<IFilterListGroup<IRepositoryListItem, RepositoryListGroup>> {
@@ -138,9 +140,9 @@ export function insertSubmoduleItems(
         },
       }
 
-      return expandedPaths.has(normalizePath(path))
-        ? [item, ...createItems(path, groupKey, depth + 1)]
-        : [item]
+      return collapsedPaths.has(normalizePath(path))
+        ? [item]
+        : [item, ...createItems(path, groupKey, depth + 1)]
     })
 
   return groups.map(group => ({
@@ -150,7 +152,7 @@ export function insertSubmoduleItems(
 
       if (
         !(repository instanceof Repository) ||
-        !expandedPaths.has(normalizePath(repository.path))
+        collapsedPaths.has(normalizePath(repository.path))
       ) {
         return [item]
       }
@@ -183,7 +185,7 @@ export function getSubmodulePaths(
 }
 
 /**
- * Returns the normalized paths of all repositories and submodules which need to
+ * Returns the normalized paths of all repositories and submodules which have to
  * be expanded in order for the given path to be visible in the list.
  */
 export function getParentPaths(
