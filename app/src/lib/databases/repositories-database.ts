@@ -76,11 +76,29 @@ export interface IDatabaseRepository {
   readonly isTutorialRepository?: boolean
 }
 
+/** A user defined grouping of repositories. */
+export interface IDatabaseProject {
+  readonly id?: number
+  readonly name: string
+}
+
+/**
+ * The membership of a repository in a project. A repository may belong to any
+ * number of projects and a project may contain any number of repositories.
+ */
+export interface IDatabaseProjectRepository {
+  readonly projectID: number
+  readonly repositoryID: number
+}
+
 /**
  * Branches are keyed on the ID of the GitHubRepository that they belong to
  * and the short name of the branch.
  */
 type BranchKey = [number, string]
+
+/** Project memberships are keyed on the project and the repository. */
+type ProjectRepositoryKey = [number, number]
 
 /** The repositories database. */
 export class RepositoriesDatabase extends BaseDatabase {
@@ -101,6 +119,15 @@ export class RepositoriesDatabase extends BaseDatabase {
 
   /** The GitHub repository owners table. */
   public declare owners: Dexie.Table<IDatabaseOwner, number>
+
+  /** The user defined projects table. */
+  public declare projects: Dexie.Table<IDatabaseProject, number>
+
+  /** A table mapping repositories to the projects they belong to. */
+  public declare projectRepositories: Dexie.Table<
+    IDatabaseProjectRepository,
+    ProjectRepositoryKey
+  >
 
   /**
    * Initialize a new repository database.
@@ -146,6 +173,11 @@ export class RepositoriesDatabase extends BaseDatabase {
 
     this.conditionalVersion(8, {}, ensureNoUndefinedParentID)
     this.conditionalVersion(9, { owners: '++id, &key' }, createOwnerKey)
+
+    this.conditionalVersion(10, {
+      projects: '++id, &name',
+      projectRepositories: '[projectID+repositoryID], projectID, repositoryID',
+    })
   }
 }
 

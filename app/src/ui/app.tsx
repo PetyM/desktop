@@ -146,6 +146,8 @@ import { CommitDragElement } from './drag-elements/commit-drag-element'
 import classNames from 'classnames'
 import { MoveToApplicationsFolder } from './move-to-applications-folder'
 import { ChangeRepositoryAlias } from './change-repository-alias/change-repository-alias-dialog'
+import { ProjectNameDialog } from './projects/project-name-dialog'
+import { DeleteProject } from './projects/delete-project-dialog'
 import { ThankYou } from './thank-you'
 import {
   getUserContributions,
@@ -2364,6 +2366,33 @@ export class App extends React.Component<IAppProps, IAppState> {
           />
         )
       }
+      case PopupType.CreateProject: {
+        return (
+          <ProjectNameDialog
+            dispatcher={this.props.dispatcher}
+            repository={popup.repository}
+            onDismissed={onPopupDismissedFn}
+          />
+        )
+      }
+      case PopupType.RenameProject: {
+        return (
+          <ProjectNameDialog
+            dispatcher={this.props.dispatcher}
+            project={popup.project}
+            onDismissed={onPopupDismissedFn}
+          />
+        )
+      }
+      case PopupType.DeleteProject: {
+        return (
+          <DeleteProject
+            dispatcher={this.props.dispatcher}
+            project={popup.project}
+            onDismissed={onPopupDismissedFn}
+          />
+        )
+      }
       case PopupType.ThankYou:
         return (
           <ThankYou
@@ -3374,6 +3403,9 @@ export class App extends React.Component<IAppProps, IAppState> {
         onOpenInExternalEditor={this.openInExternalEditor}
         externalEditorLabel={this.externalEditorLabel}
         shellLabel={useCustomShell ? undefined : selectedShell}
+        projects={this.state.projects}
+        repositoryProjects={this.state.repositoryProjects}
+        selectedProjectId={this.state.selectedProjectId}
         dispatcher={this.props.dispatcher}
       />
     )
@@ -3577,9 +3609,34 @@ export class App extends React.Component<IAppProps, IAppState> {
       shellLabel: this.state.useCustomShell
         ? undefined
         : this.state.selectedShell,
+      projects: this.state.projects,
+      repositoryProjectIds:
+        this.state.repositoryProjects.get(repository.id) ?? [],
+      onToggleProject: this.onToggleRepositoryProject,
+      onAddToNewProject: this.onAddRepositoryToNewProject,
     })
 
     showContextualMenu(items)
+  }
+
+  private onToggleRepositoryProject = (
+    repository: Repository,
+    projectId: number,
+    isMember: boolean
+  ) => {
+    const current = this.state.repositoryProjects.get(repository.id) ?? []
+    const projectIds = isMember
+      ? current.filter(id => id !== projectId)
+      : [...current, projectId]
+
+    this.props.dispatcher.setRepositoryProjects(repository, projectIds)
+  }
+
+  private onAddRepositoryToNewProject = (repository: Repository) => {
+    this.props.dispatcher.showPopup({
+      type: PopupType.CreateProject,
+      repository,
+    })
   }
 
   private renderPushPullToolbarButton() {

@@ -14,6 +14,41 @@
   min-width: inherit;
 
   /**
+   * Stacks the project switcher on top of the filtered repository list while
+   * letting the list take up whatever space is left over.
+   */
+  .repository-list-contents {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: inherit;
+    // Without this the filter list won't shrink below its content size and
+    // the list ends up scrolling the entire foldout instead of itself.
+    min-height: 0;
+  }
+
+  .project-switcher {
+    padding: var(--spacing-half) var(--spacing-half) 0 var(--spacing-half);
+
+    .project-switcher-button {
+      width: 100%;
+
+      // The button contents are the project octicon, the name and the
+      // dropdown triangle, laid out with the name taking up the slack.
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+
+      .project-name {
+        flex-grow: 1;
+        text-align: left;
+        margin: 0 var(--spacing-half);
+        @include ellipsis;
+      }
+    }
+  }
+
+  /**
    * Container for repository list items in the sidebar
    *
    * Contains two elements, one 16x16 <svg class='octicon'> holding an octicon

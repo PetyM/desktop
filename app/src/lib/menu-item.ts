@@ -8,9 +8,9 @@ export interface IMenuItem {
   readonly action?: () => void
 
   /** The type of item. */
-  readonly type?: 'separator' | 'checkbox'
+  readonly type?: 'separator' | 'checkbox' | 'radio'
 
-  /** Is the menu item checked? Only applies to checkbox type. */
+  /** Whether a checkbox or radio item is currently checked. */
   readonly checked?: boolean
 
   /** Is the menu item enabled? Defaults to true. */

@@ -295,6 +295,7 @@ import {
   setObject,
   getFloatNumber,
 } from '../local-storage'
+import { compareProjects, IProject } from '../../models/project'
 import { ExternalEditorError, suggestedExternalEditor } from '../editors/shared'
 import { ApiRepositoriesStore } from './api-repositories-store'
 import {
@@ -448,6 +449,8 @@ const LastSelectedRepositoryIDKey = 'last-selected-repository-id'
  */
 const MaxPullRequestLookups = 10
 
+const selectedProjectIdKey = 'selected-project-id'
+
 const RecentRepositoriesKey = 'recently-selected-repositories'
 /**
  *  maximum number of repositories shown in the "Recent" repositories group
@@ -585,6 +588,11 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private accounts: ReadonlyArray<Account> = new Array<Account>()
   private repositories: ReadonlyArray<Repository> = new Array<Repository>()
   private recentRepositories: ReadonlyArray<number> = new Array<number>()
+
+  private projects: ReadonlyArray<IProject> = new Array<IProject>()
+  private repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>> =
+    new Map<number, ReadonlyArray<number>>()
+  private selectedProjectId: number | null = null
 
   private selectedRepository: Repository | CloningRepository | null = null
 
@@ -1059,6 +1067,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.emitUpdate()
     })
 
+    this.repositoriesStore.onDidUpdateProjects(() => this.refreshProjects())
+
     this.pullRequestCoordinator.onPullRequestsChanged((repo, pullRequests) =>
       this.onPullRequestChanged(repo, pullRequests)
     )
@@ -1270,6 +1280,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
       repositories,
       recentRepositories: this.recentRepositories,
       localRepositoryStateLookup: this.localRepositoryStateLookup,
+      projects: this.projects,
+      repositoryProjects: this.repositoryProjects,
+      selectedProjectId: this.selectedProjectId,
       windowState: this.windowState,
       windowZoomFactor: this.windowZoomFactor,
       appIsFocused: this.appIsFocused,
@@ -2420,10 +2433,19 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   /** Load the initial state for the app. */
   public async loadInitialState() {
-    const [accounts, repositories] = await Promise.all([
-      this.accountsStore.getAll(),
-      this.repositoriesStore.getAll(),
-    ])
+    const [accounts, repositories, projects, repositoryProjects] =
+      await Promise.all([
+        this.accountsStore.getAll(),
+        this.repositoriesStore.getAll(),
+        this.repositoriesStore.getAllProjects(),
+        this.repositoriesStore.getRepositoryProjects(),
+      ])
+
+    this.projects = [...projects].sort(compareProjects)
+    this.repositoryProjects = repositoryProjects
+    this.selectedProjectId = this.resolveSelectedProjectId(
+      getNumber(selectedProjectIdKey) ?? null
+    )
 
     log.info(
       `[AppStore] loading ${repositories.length} repositories from store`
@@ -4997,6 +5019,86 @@ export class AppStore extends TypedBaseStore<IAppState> {
     newAlias: string | null
   ): Promise<void> {
     return this.repositoriesStore.updateRepositoryAlias(repository, newAlias)
+  }
+
+  /**
+   * Reload the projects and their contents from the repositories store,
+   * dropping the project selection if the selected project is gone.
+   */
+  private async refreshProjects() {
+    const [projects, repositoryProjects] = await Promise.all([
+      this.repositoriesStore.getAllProjects(),
+      this.repositoriesStore.getRepositoryProjects(),
+    ])
+
+    this.projects = [...projects].sort(compareProjects)
+    this.repositoryProjects = repositoryProjects
+    await this._setSelectedProject(
+      this.resolveSelectedProjectId(this.selectedProjectId)
+    )
+
+    this.emitUpdate()
+  }
+
+  /** Returns the given project id if it still refers to a project, else null */
+  private resolveSelectedProjectId(id: number | null) {
+    return id !== null && this.projects.some(p => p.id === id) ? id : null
+  }
+
+  /** This shouldn't be called directly. See `Dispatcher`. */
+  public _setSelectedProject(projectId: number | null): Promise<void> {
+    if (this.selectedProjectId !== projectId) {
+      this.selectedProjectId = projectId
+
+      if (projectId === null) {
+        localStorage.removeItem(selectedProjectIdKey)
+      } else {
+        setNumber(selectedProjectIdKey, projectId)
+      }
+
+      this.emitUpdate()
+    }
+
+    return Promise.resolve()
+  }
+
+  /**
+   * This shouldn't be called directly. See `Dispatcher`.
+   *
+   * Creates a project and selects it so that the user immediately sees the
+   * result of what they just created.
+   */
+  public async _createProject(
+    name: string,
+    repositories: ReadonlyArray<Repository> = []
+  ): Promise<IProject> {
+    const project = await this.repositoriesStore.createProject(
+      name,
+      repositories
+    )
+
+    await this.refreshProjects()
+    await this._setSelectedProject(project.id)
+
+    return project
+  }
+
+  /** This shouldn't be called directly. See `Dispatcher`. */
+  public async _renameProject(project: IProject, name: string): Promise<void> {
+    await this.repositoriesStore.renameProject(project, name)
+  }
+
+  /** This shouldn't be called directly. See `Dispatcher`. */
+  public async _deleteProject(project: IProject): Promise<void> {
+    await this.repositoriesStore.deleteProject(project)
+  }
+
+  /** This shouldn't be called directly. See `Dispatcher`. */
+  public async _setRepositoryProjects(
+    repository: Repository,
+    projectIds: ReadonlyArray<number>
+  ): Promise<void> {
+    await this.repositoriesStore.setRepositoryProjects(repository, projectIds)
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -8108,6 +8210,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     paths: ReadonlyArray<string>
   ): Promise<ReadonlyArray<Repository>> {
     const addedRepositories = new Array<Repository>()
+    // The repositories which weren't already known to us. Those are the ones
+    // that get picked up by the project the user is currently filtering by.
+    const newRepositories = new Array<Repository>()
     const lfsRepositories = new Array<Repository>()
     const invalidPaths = new Array<string>()
 
@@ -8125,6 +8230,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
         )
 
         addedRepositories.push(repository)
+        newRepositories.push(repository)
         continue
       }
 
@@ -8157,6 +8263,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
           this.isUsingLFS(addedRepo),
         ])
         addedRepositories.push(refreshedRepo)
+        newRepositories.push(refreshedRepo)
 
         if (usingLFS) {
           lfsRepositories.push(refreshedRepo)
@@ -8164,6 +8271,15 @@ export class AppStore extends TypedBaseStore<IAppState> {
       } else {
         invalidPaths.push(path)
       }
+    }
+
+    // Repositories added while a project is selected join that project,
+    // otherwise they'd disappear from the list the moment they're added.
+    if (this.selectedProjectId !== null && newRepositories.length > 0) {
+      await this.repositoriesStore.addRepositoriesToProject(
+        this.selectedProjectId,
+        newRepositories
+      )
     }
 
     if (invalidPaths.length > 0) {

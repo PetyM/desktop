@@ -28,6 +28,8 @@ import { WorkflowPreferences } from '../../models/workflow-preferences'
 import { clearTagsToPush } from './helpers/tags-to-push-storage'
 import { IMatchedGitHubRepository } from '../repository-matching'
 import { shallowEquals } from '../equality'
+import { IProject } from '../../models/project'
+import { Disposable } from 'event-kit'
 
 type AddRepositoryOptions = {
   missing?: boolean
@@ -271,10 +273,202 @@ export class RepositoriesStore extends TypedBaseStore<
 
   /** Remove the given repository. */
   public async removeRepository(repository: Repository): Promise<void> {
-    await this.db.repositories.delete(repository.id)
+    await this.db.transaction(
+      'rw',
+      this.db.repositories,
+      this.db.projectRepositories,
+      async () => {
+        await this.db.repositories.delete(repository.id)
+        await this.db.projectRepositories
+          .where('repositoryID')
+          .equals(repository.id)
+          .delete()
+      }
+    )
     clearTagsToPush(repository)
 
     this.emitUpdatedRepositories()
+    this.emitUpdatedProjects()
+  }
+
+  /** Get all the projects the user has created. */
+  public async getAllProjects(): Promise<ReadonlyArray<IProject>> {
+    const projects = await this.db.projects.toArray()
+
+    return projects.map(p => {
+      assertNonNullable(p.id, 'Missing project id')
+      return { id: p.id, name: p.name }
+    })
+  }
+
+  /**
+   * Get the project membership of every repository which belongs to at least
+   * one project, keyed on the repository id.
+   */
+  public async getRepositoryProjects(): Promise<
+    ReadonlyMap<number, ReadonlyArray<number>>
+  > {
+    const memberships = await this.db.projectRepositories.toArray()
+    const map = new Map<number, Array<number>>()
+
+    for (const { repositoryID, projectID } of memberships) {
+      const projectIDs = map.get(repositoryID)
+
+      if (projectIDs === undefined) {
+        map.set(repositoryID, [projectID])
+      } else {
+        projectIDs.push(projectID)
+      }
+    }
+
+    return map
+  }
+
+  /**
+   * Create a new project.
+   *
+   * @param name          The name of the project. Project names are unique
+   *                      (ignoring case).
+   * @param repositories  Repositories to add to the project on creation.
+   */
+  public async createProject(
+    name: string,
+    repositories: ReadonlyArray<Repository> = []
+  ): Promise<IProject> {
+    const trimmedName = name.trim()
+
+    if (trimmedName.length === 0) {
+      throw new Error('A project must have a name.')
+    }
+
+    const project = await this.db.transaction(
+      'rw',
+      this.db.projects,
+      this.db.projectRepositories,
+      async () => {
+        await this.assertProjectNameAvailable(trimmedName)
+
+        const id = await this.db.projects.add({ name: trimmedName })
+
+        await this.db.projectRepositories.bulkPut(
+          repositories.map(r => ({ projectID: id, repositoryID: r.id }))
+        )
+
+        return { id, name: trimmedName }
+      }
+    )
+
+    this.emitUpdatedProjects()
+
+    return project
+  }
+
+  /** Rename an existing project. */
+  public async renameProject(
+    project: IProject,
+    name: string
+  ): Promise<IProject> {
+    const trimmedName = name.trim()
+
+    if (trimmedName.length === 0) {
+      throw new Error('A project must have a name.')
+    }
+
+    await this.db.transaction('rw', this.db.projects, async () => {
+      await this.assertProjectNameAvailable(trimmedName, project.id)
+      await this.db.projects.update(project.id, { name: trimmedName })
+    })
+
+    this.emitUpdatedProjects()
+
+    return { id: project.id, name: trimmedName }
+  }
+
+  /** Delete a project. The repositories it contains are left untouched. */
+  public async deleteProject(project: IProject): Promise<void> {
+    await this.db.transaction(
+      'rw',
+      this.db.projects,
+      this.db.projectRepositories,
+      async () => {
+        await this.db.projects.delete(project.id)
+        await this.db.projectRepositories
+          .where('projectID')
+          .equals(project.id)
+          .delete()
+      }
+    )
+
+    this.emitUpdatedProjects()
+  }
+
+  /** Replace the set of projects that the given repository belongs to. */
+  public async setRepositoryProjects(
+    repository: Repository,
+    projectIDs: ReadonlyArray<number>
+  ): Promise<void> {
+    await this.db.transaction('rw', this.db.projectRepositories, async () => {
+      await this.db.projectRepositories
+        .where('repositoryID')
+        .equals(repository.id)
+        .delete()
+
+      await this.db.projectRepositories.bulkPut(
+        projectIDs.map(projectID => ({
+          projectID,
+          repositoryID: repository.id,
+        }))
+      )
+    })
+
+    this.emitUpdatedProjects()
+  }
+
+  /**
+   * Add the given repositories to a project, leaving the projects they already
+   * belong to alone. Repositories which are already in the project are
+   * silently ignored.
+   */
+  public async addRepositoriesToProject(
+    projectID: number,
+    repositories: ReadonlyArray<Repository>
+  ): Promise<void> {
+    if (repositories.length === 0) {
+      return
+    }
+
+    await this.db.projectRepositories.bulkPut(
+      repositories.map(r => ({ projectID, repositoryID: r.id }))
+    )
+
+    this.emitUpdatedProjects()
+  }
+
+  /**
+   * Ensure no other project is already using the given name. Comparison is
+   * case-insensitive so that "Work" and "work" can't both exist.
+   */
+  private async assertProjectNameAvailable(name: string, ignoreID?: number) {
+    const existing = await this.db.projects
+      .filter(
+        p =>
+          p.id !== ignoreID &&
+          p.name.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0
+      )
+      .first()
+
+    if (existing !== undefined) {
+      throw new Error(`A project named "${existing.name}" already exists.`)
+    }
+  }
+
+  private emitUpdatedProjects() {
+    this.emitter.emit('did-update-projects', {})
+  }
+
+  /** Register a function to be called when projects or their contents change */
+  public onDidUpdateProjects(fn: () => void): Disposable {
+    return this.emitter.on('did-update-projects', fn)
   }
 
   /** Update the repository's `missing` flag. */

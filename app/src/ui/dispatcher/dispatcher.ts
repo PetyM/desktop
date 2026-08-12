@@ -61,6 +61,7 @@ import { getTipSha } from '../../lib/tip'
 
 import { Account } from '../../models/account'
 import { AppMenu, ExecutableMenuItem } from '../../models/app-menu'
+import { IProject } from '../../models/project'
 import { Author, UnknownAuthor } from '../../models/author'
 import { Branch, IAheadBehind } from '../../models/branch'
 import { BranchesTab } from '../../models/branches-tab'
@@ -871,6 +872,40 @@ export class Dispatcher {
     newAlias: string | null
   ): Promise<void> {
     return this.appStore._changeRepositoryAlias(repository, newAlias)
+  }
+
+  /**
+   * Filter the repository list down to the given project, or show every
+   * repository when passed null.
+   */
+  public setSelectedProject(projectId: number | null): Promise<void> {
+    return this.appStore._setSelectedProject(projectId)
+  }
+
+  /** Create a new project, optionally containing the given repositories. */
+  public createProject(
+    name: string,
+    repositories: ReadonlyArray<Repository> = []
+  ): Promise<IProject> {
+    return this.appStore._createProject(name, repositories)
+  }
+
+  /** Rename an existing project. */
+  public renameProject(project: IProject, name: string): Promise<void> {
+    return this.appStore._renameProject(project, name)
+  }
+
+  /** Delete a project. The repositories it contains are left untouched. */
+  public deleteProject(project: IProject): Promise<void> {
+    return this.appStore._deleteProject(project)
+  }
+
+  /** Replace the set of projects the given repository belongs to. */
+  public setRepositoryProjects(
+    repository: Repository,
+    projectIds: ReadonlyArray<number>
+  ): Promise<void> {
+    return this.appStore._setRepositoryProjects(repository, projectIds)
   }
 
   /** Rename the branch to a new name. */

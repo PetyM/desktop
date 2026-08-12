@@ -27,6 +27,9 @@ import { enableWorktreeSupport } from '../../lib/feature-flag'
 import { SectionFilterList } from '../lib/section-filter-list'
 import { assertNever } from '../../lib/fatal-error'
 import { IAheadBehind } from '../../models/branch'
+import { IProject } from '../../models/project'
+import { ProjectSwitcher } from './project-switcher'
+import { CloningRepository } from '../../models/cloning-repository'
 
 const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 
@@ -73,6 +76,15 @@ interface IRepositoriesListProps {
 
   /** The text entered by the user to filter their repository list */
   readonly filterText: string
+
+  /** The projects the user has created */
+  readonly projects: ReadonlyArray<IProject>
+
+  /** The projects each repository belongs to, keyed by repository id */
+  readonly repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>>
+
+  /** The project the list is filtered by, or null when showing everything */
+  readonly selectedProjectId: number | null
 
   readonly dispatcher: Dispatcher
 }
@@ -143,6 +155,26 @@ export class RepositoriesList extends React.Component<
    * See findMatchingListItem for more details.
    */
   private getSelectedListItem = memoizeOne(findMatchingListItem)
+
+  /**
+   * A memoized function narrowing the repositories down to the ones belonging
+   * to the selected project. Repositories currently being cloned are always
+   * included since they can't be assigned to a project until they're done.
+   */
+  private getVisibleRepositories = memoizeOne(
+    (
+      repositories: ReadonlyArray<Repositoryish>,
+      repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>>,
+      selectedProjectId: number | null
+    ) =>
+      selectedProjectId === null
+        ? repositories
+        : repositories.filter(
+            r =>
+              r instanceof CloningRepository ||
+              repositoryProjects.get(r.id)?.includes(selectedProjectId) === true
+          )
+  )
 
   public constructor(props: IRepositoriesListProps) {
     super(props)
@@ -306,6 +338,11 @@ export class RepositoriesList extends React.Component<
         : undefined,
       repository: item.repository,
       shellLabel: this.props.shellLabel,
+      projects: this.props.projects,
+      repositoryProjectIds:
+        this.props.repositoryProjects.get(item.repository.id) ?? [],
+      onToggleProject: this.onToggleRepositoryProject,
+      onAddToNewProject: this.onAddRepositoryToNewProject,
     })
 
     showContextualMenu(items)
@@ -322,8 +359,14 @@ export class RepositoriesList extends React.Component<
       this.getGroupLabel(groups[group].identifier)
 
   public render() {
-    const groups = this.getRepositoryGroups(
+    const repositories = this.getVisibleRepositories(
       this.props.repositories,
+      this.props.repositoryProjects,
+      this.props.selectedProjectId
+    )
+
+    const groups = this.getRepositoryGroups(
+      repositories,
       this.props.localRepositoryStateLookup,
       this.props.recentRepositories
     )
@@ -339,33 +382,85 @@ export class RepositoriesList extends React.Component<
 
     return (
       <div className="repository-list">
-        <SectionFilterList<IRepositoryListItem, RepositoryListGroup>
-          rowHeight={RowHeight}
-          selectedItem={selectedItem}
-          filterText={this.props.filterText}
-          onFilterTextChanged={this.props.onFilterTextChanged}
-          renderItem={this.renderItem}
-          renderRowFocusTooltip={this.renderRowFocusTooltip}
-          renderGroupHeader={this.renderGroupHeader}
-          onItemClick={this.onItemClick}
-          renderPostFilter={this.renderPostFilter}
-          renderNoItems={this.renderNoItems}
-          groups={groups}
-          invalidationProps={{
-            repositories: this.props.repositories,
-            filterText: this.props.filterText,
-          }}
-          onItemContextMenu={this.onItemContextMenu}
-          getGroupAriaLabel={this.getGroupAriaLabelGetter(groups)}
-          getItemAriaLabel={this.getItemAriaLabel}
-          onSelectionChanged={this.onSelectionChanged}
-        />
+        <div className="repository-list-contents">
+          <ProjectSwitcher
+            projects={this.props.projects}
+            selectedProject={this.getSelectedProject()}
+            onSelectedProjectChanged={this.onSelectedProjectChanged}
+            onCreateProject={this.onCreateProject}
+            onRenameProject={this.onRenameProject}
+            onDeleteProject={this.onDeleteProject}
+          />
+          <SectionFilterList<IRepositoryListItem, RepositoryListGroup>
+            rowHeight={RowHeight}
+            selectedItem={selectedItem}
+            filterText={this.props.filterText}
+            onFilterTextChanged={this.props.onFilterTextChanged}
+            renderItem={this.renderItem}
+            renderRowFocusTooltip={this.renderRowFocusTooltip}
+            renderGroupHeader={this.renderGroupHeader}
+            onItemClick={this.onItemClick}
+            renderPostFilter={this.renderPostFilter}
+            renderNoItems={this.renderNoItems}
+            groups={groups}
+            invalidationProps={{
+              repositories,
+              filterText: this.props.filterText,
+            }}
+            onItemContextMenu={this.onItemContextMenu}
+            getGroupAriaLabel={this.getGroupAriaLabelGetter(groups)}
+            getItemAriaLabel={this.getItemAriaLabel}
+            onSelectionChanged={this.onSelectionChanged}
+          />
+        </div>
       </div>
     )
   }
 
   private onSelectionChanged = (selectedItem: IRepositoryListItem | null) => {
     this.setState({ selectedItem })
+  }
+
+  private getSelectedProject() {
+    const { projects, selectedProjectId } = this.props
+
+    return projects.find(p => p.id === selectedProjectId) ?? null
+  }
+
+  private onSelectedProjectChanged = (projectId: number | null) => {
+    this.props.dispatcher.setSelectedProject(projectId)
+  }
+
+  private onCreateProject = () => {
+    this.props.dispatcher.showPopup({ type: PopupType.CreateProject })
+  }
+
+  private onRenameProject = (project: IProject) => {
+    this.props.dispatcher.showPopup({ type: PopupType.RenameProject, project })
+  }
+
+  private onDeleteProject = (project: IProject) => {
+    this.props.dispatcher.showPopup({ type: PopupType.DeleteProject, project })
+  }
+
+  private onToggleRepositoryProject = (
+    repository: Repository,
+    projectId: number,
+    isMember: boolean
+  ) => {
+    const current = this.props.repositoryProjects.get(repository.id) ?? []
+    const projectIds = isMember
+      ? current.filter(id => id !== projectId)
+      : [...current, projectId]
+
+    this.props.dispatcher.setRepositoryProjects(repository, projectIds)
+  }
+
+  private onAddRepositoryToNewProject = (repository: Repository) => {
+    this.props.dispatcher.showPopup({
+      type: PopupType.CreateProject,
+      repository,
+    })
   }
 
   private renderPostFilter = () => {
@@ -391,6 +486,23 @@ export class RepositoriesList extends React.Component<
   }
 
   private renderNoItems = () => {
+    const selectedProject = this.getSelectedProject()
+
+    if (selectedProject !== null && this.props.filterText.length === 0) {
+      return (
+        <div className="no-items no-results-found">
+          <img src={BlankSlateImage} className="blankslate-image" alt="" />
+          <div className="title">
+            There are no repositories in "{selectedProject.name}"
+          </div>
+          <div className="protip">
+            Right click a repository and use the Projects menu to add it to this
+            project.
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="no-items no-results-found">
         <img src={BlankSlateImage} className="blankslate-image" alt="" />

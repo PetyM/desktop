@@ -1,6 +1,7 @@
 import { Repository } from '../../models/repository'
 import { IMenuItem } from '../../lib/menu-item'
 import { Repositoryish } from './group-repositories'
+import { IProject } from '../../models/project'
 import { clipboard } from 'electron'
 import {
   RevealInFileManagerLabel,
@@ -22,6 +23,15 @@ interface IRepositoryListItemContextMenuConfig {
   onRemoveRepositoryAlias: (repository: Repository) => void
   onCreateWorktree?: (repository: Repository) => void
   onShowWorktrees?: (repository: Repository) => void
+  projects: ReadonlyArray<IProject>
+  /** The ids of the projects the repository currently belongs to */
+  repositoryProjectIds: ReadonlyArray<number>
+  onToggleProject: (
+    repository: Repository,
+    projectId: number,
+    isMember: boolean
+  ) => void
+  onAddToNewProject: (repository: Repository) => void
 }
 
 export const generateRepositoryListContextMenu = (
@@ -41,6 +51,7 @@ export const generateRepositoryListContextMenu = (
   const items: ReadonlyArray<IMenuItem> = [
     ...buildAliasMenuItems(config),
     ...buildWorktreeMenuItems(config),
+    ...buildProjectMenuItems(config),
     {
       label: __DARWIN__ ? 'Copy Repo Name' : 'Copy repo name',
       action: () => clipboard.writeText(repository.name),
@@ -78,6 +89,40 @@ export const generateRepositoryListContextMenu = (
   ]
 
   return items
+}
+
+const buildProjectMenuItems = (
+  config: IRepositoryListItemContextMenuConfig
+): ReadonlyArray<IMenuItem> => {
+  const { repository, projects, repositoryProjectIds } = config
+
+  // Repositories which are still being cloned don't have a database record
+  // yet, so they can't be a member of a project.
+  if (!(repository instanceof Repository)) {
+    return []
+  }
+
+  const submenu: Array<IMenuItem> = projects.map(project => {
+    const isMember = repositoryProjectIds.includes(project.id)
+
+    return {
+      label: project.name,
+      type: 'checkbox',
+      checked: isMember,
+      action: () => config.onToggleProject(repository, project.id, isMember),
+    }
+  })
+
+  if (submenu.length > 0) {
+    submenu.push({ type: 'separator' })
+  }
+
+  submenu.push({
+    label: __DARWIN__ ? 'New Project…' : 'New project…',
+    action: () => config.onAddToNewProject(repository),
+  })
+
+  return [{ label: 'Projects', submenu }]
 }
 
 const buildAliasMenuItems = (

@@ -28,6 +28,7 @@ import { BypassReasonType } from '../ui/secret-scanning/bypass-push-protection-d
 import { TerminalOutput, TerminalOutputListener } from '../lib/git'
 import type { IBYOKModel, IBYOKProvider } from '../lib/copilot/byok'
 import { WorktreeEntry } from './worktree'
+import { IProject } from './project'
 
 export enum PopupType {
   RenameBranch = 'RenameBranch',
@@ -79,6 +80,9 @@ export enum PopupType {
   ConfirmDiscardSelection = 'ConfirmDiscardSelection',
   MoveToApplicationsFolder = 'MoveToApplicationsFolder',
   ChangeRepositoryAlias = 'ChangeRepositoryAlias',
+  CreateProject = 'CreateProject',
+  RenameProject = 'RenameProject',
+  DeleteProject = 'DeleteProject',
   ThankYou = 'ThankYou',
   CommitMessage = 'CommitMessage',
   MultiCommitOperation = 'MultiCommitOperation',
@@ -343,6 +347,13 @@ export type PopupDetail =
     }
   | { type: PopupType.MoveToApplicationsFolder }
   | { type: PopupType.ChangeRepositoryAlias; repository: Repository }
+  | {
+      type: PopupType.CreateProject
+      /** Repository to add to the project once it's been created */
+      repository?: Repository
+    }
+  | { type: PopupType.RenameProject; project: IProject }
+  | { type: PopupType.DeleteProject; project: IProject }
   | {
       type: PopupType.ThankYou
       userContributions: ReadonlyArray<ReleaseNote>

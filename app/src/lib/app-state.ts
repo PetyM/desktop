@@ -68,6 +68,7 @@ import { Popup } from '../models/popup'
 import { RepoRulesInfo } from '../models/repo-rules'
 import { IAPIRepoRuleset } from './api'
 import { ICustomIntegration } from './custom-integration'
+import { IProject } from '../models/project'
 import { Emoji } from './emoji'
 import { IUpdateState } from '../ui/lib/update-store'
 
@@ -107,6 +108,21 @@ export interface IAppState {
    * A cache of the latest repository state values, keyed by the repository id
    */
   readonly localRepositoryStateLookup: Map<number, ILocalRepositoryState>
+
+  /** The user defined projects that repositories can be grouped into */
+  readonly projects: ReadonlyArray<IProject>
+
+  /**
+   * The projects each repository belongs to, keyed by the repository id.
+   * Repositories which aren't part of any project are omitted.
+   */
+  readonly repositoryProjects: ReadonlyMap<number, ReadonlyArray<number>>
+
+  /**
+   * The id of the project the repository list is currently filtered by, or
+   * null when all repositories are shown.
+   */
+  readonly selectedProjectId: number | null
 
   readonly selectedState: PossibleSelections | null
 
