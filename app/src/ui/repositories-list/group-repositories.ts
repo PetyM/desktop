@@ -7,42 +7,28 @@ import { CloningRepository } from '../../models/cloning-repository'
 import { caseInsensitiveCompare } from '../../lib/compare'
 import { IFilterListGroup, IFilterListItem } from '../lib/filter-list'
 import { IAheadBehind } from '../../models/branch'
-import { assertNever } from '../../lib/fatal-error'
 import { SubmoduleEntry } from '../../models/submodule'
 import { matchExistingRepository } from '../../lib/repository-matching'
 import { normalizePath } from '../../lib/path'
 import * as Path from 'path'
 import * as Os from 'os'
 
-export type RepositoryListGroup =
-  | {
-      kind: 'recent'
-    }
-  | {
-      kind: 'folder'
-      /** The absolute path of the folder the group's repositories live in */
-      path: string
-    }
+export type RepositoryListGroup = {
+  /** The absolute path of the folder the group's repositories live in */
+  readonly path: string
+}
 
 /**
  * Returns a unique grouping key (string) for a repository group. Doubles as a
  * case insensitive sorting key (i.e the case insensitive sort order of the keys
  * is the order in which the groups will be displayed in the repository list).
+ *
+ * Normalized so that folders which only differ in casing end up in the same
+ * group on Windows, while the group keeps the casing of the first repository
+ * we saw in that folder.
  */
-export const getGroupKey = (group: RepositoryListGroup) => {
-  const { kind } = group
-  switch (kind) {
-    case 'recent':
-      return `0:recent`
-    case 'folder':
-      // Normalized so that folders which only differ in casing end up in the
-      // same group on Windows, while the group keeps the casing of the first
-      // repository we saw in that folder.
-      return `1:folder:${normalizePath(group.path)}`
-    default:
-      assertNever(group, `Unknown repository group kind ${kind}`)
-  }
-}
+export const getGroupKey = (group: RepositoryListGroup) =>
+  normalizePath(group.path)
 export type Repositoryish = Repository | CloningRepository
 
 export interface IRepositoryListItem extends IFilterListItem {
@@ -117,8 +103,8 @@ export function insertSubmoduleItems(
         repository && localRepositoryStateLookup.get(repository.id)
 
       const item: IRepositoryListItem = {
-        // Prefixed with the group key since the same submodule can show up in
-        // both the `Recent` group and the group of its parent repository.
+        // Prefixed with the group key to keep the id unique should the same
+        // submodule ever show up in more than one group.
         id: `submodule/${groupKey}/${path}`,
         text: [entry.path],
         repository: repository ?? null,
@@ -212,11 +198,8 @@ export function getParentPaths(
   }
 }
 
-const recentRepositoriesThreshold = 7
-
 /** The folder a repository is grouped by, i.e. the one containing it */
 const getGroupForRepository = (repo: Repositoryish): RepositoryListGroup => ({
-  kind: 'folder',
   path: Path.dirname(Path.resolve(repo.path)),
 })
 
@@ -224,11 +207,8 @@ type RepoGroupItem = { group: RepositoryListGroup; repos: Repositoryish[] }
 
 export function groupRepositories(
   repositories: ReadonlyArray<Repositoryish>,
-  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>,
-  recentRepositories: ReadonlyArray<number>
+  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
 ): ReadonlyArray<IFilterListGroup<IRepositoryListItem, RepositoryListGroup>> {
-  const includeRecentGroup = repositories.length > recentRepositoriesThreshold
-  const recentSet = includeRecentGroup ? new Set(recentRepositories) : undefined
   const groups = new Map<string, RepoGroupItem>()
 
   const addToGroup = (group: RepositoryListGroup, repo: Repositoryish) => {
@@ -243,10 +223,6 @@ export function groupRepositories(
   }
 
   for (const repo of repositories) {
-    if (recentSet?.has(repo.id) && repo instanceof Repository) {
-      addToGroup({ kind: 'recent' }, repo)
-    }
-
     addToGroup(getGroupForRepository(repo), repo)
   }
 
@@ -254,12 +230,7 @@ export function groupRepositories(
     .sort(([xKey], [yKey]) => caseInsensitiveCompare(xKey, yKey))
     .map(([, { group, repos }]) => ({
       identifier: group,
-      items: toSortedListItems(
-        group,
-        repos,
-        localRepositoryStateLookup,
-        groups
-      ),
+      items: toSortedListItems(repos, localRepositoryStateLookup),
     }))
 }
 
@@ -269,27 +240,13 @@ const getDisplayTitle = (r: Repositoryish) =>
   r instanceof Repository && r.alias != null ? r.alias : r.name
 
 const toSortedListItems = (
-  group: RepositoryListGroup,
   repositories: ReadonlyArray<Repositoryish>,
-  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>,
-  groups: Map<string, RepoGroupItem>
+  localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
 ): IRepositoryListItem[] => {
-  const groupNames = new Map<string, number>()
-  const allNames = new Map<string, number>()
+  const names = new Map<string, number>()
 
-  for (const groupItem of groups.values()) {
-    // All items in the recent group are by definition present in another
-    // group and therefore we don't want to count them.
-    if (groupItem.group.kind === 'recent') {
-      continue
-    }
-
-    for (const title of groupItem.repos.map(getDisplayTitle)) {
-      allNames.set(title, (allNames.get(title) ?? 0) + 1)
-      if (groupItem.group === group) {
-        groupNames.set(title, (groupNames.get(title) ?? 0) + 1)
-      }
-    }
+  for (const title of repositories.map(getDisplayTitle)) {
+    names.set(title, (names.get(title) ?? 0) + 1)
   }
 
   return repositories
@@ -301,12 +258,7 @@ const toSortedListItems = (
         text: r instanceof Repository ? [title, nameOf(r)] : [title],
         id: r.id.toString(),
         repository: r,
-        needsDisambiguation:
-          // If the repository has a duplicate name in its folder group, or is
-          // in the 'recent' group and has a duplicate name in any group, we
-          // need to disambiguate it.
-          ((groupNames.get(title) ?? 0) > 1 && group.kind === 'folder') ||
-          ((allNames.get(title) ?? 0) > 1 && group.kind === 'recent'),
+        needsDisambiguation: (names.get(title) ?? 0) > 1,
         aheadBehind: repoState?.aheadBehind ?? null,
         changedFilesCount: repoState?.changedFilesCount ?? 0,
         branchName: repoState?.branchName ?? null,

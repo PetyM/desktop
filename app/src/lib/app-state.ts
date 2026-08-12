@@ -101,11 +101,6 @@ export interface IAppState {
   readonly repositories: ReadonlyArray<Repository | CloningRepository>
 
   /**
-   * List of IDs of the most recently opened repositories (most recent first)
-   */
-  readonly recentRepositories: ReadonlyArray<number>
-
-  /**
    * A cache of the latest repository state values, keyed by the repository id
    */
   readonly localRepositoryStateLookup: Map<number, ILocalRepositoryState>

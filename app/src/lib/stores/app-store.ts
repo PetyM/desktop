@@ -1296,7 +1296,6 @@ export class AppStore extends TypedBaseStore<IAppState> {
     return {
       accounts: this.accounts,
       repositories,
-      recentRepositories: this.recentRepositories,
       localRepositoryStateLookup: this.localRepositoryStateLookup,
       projects: this.projects,
       repositoryProjects: this.repositoryProjects,

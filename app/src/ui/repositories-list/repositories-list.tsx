@@ -40,7 +40,6 @@ const BlankSlateImage = encodePathAsUrl(__dirname, 'static/empty-no-repo.svg')
 interface IRepositoriesListProps {
   readonly selectedRepository: Repositoryish | null
   readonly repositories: ReadonlyArray<Repositoryish>
-  readonly recentRepositories: ReadonlyArray<number>
 
   /** A cache of the latest repository state values, keyed by the repository id */
   readonly localRepositoryStateLookup: ReadonlyMap<
@@ -152,16 +151,11 @@ export class RepositoriesList extends React.Component<
   private getRepositoryGroups = memoizeOne(
     (
       repositories: ReadonlyArray<Repositoryish> | null,
-      localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>,
-      recentRepositories: ReadonlyArray<number>
+      localRepositoryStateLookup: ReadonlyMap<number, ILocalRepositoryState>
     ) =>
       repositories === null
         ? []
-        : groupRepositories(
-            repositories,
-            localRepositoryStateLookup,
-            recentRepositories
-          )
+        : groupRepositories(repositories, localRepositoryStateLookup)
   )
 
   /**
@@ -174,12 +168,7 @@ export class RepositoriesList extends React.Component<
       groups: ReadonlyArray<
         IFilterListGroup<IRepositoryListItem, RepositoryListGroup>
       >
-    ) =>
-      getFolderGroupLabels(
-        groups.flatMap(({ identifier: g }) =>
-          g.kind === 'folder' ? [g.path] : []
-        )
-      )
+    ) => getFolderGroupLabels(groups.map(g => g.identifier.path))
   )
 
   private groupLabels: ReadonlyMap<string, string> = new Map()
@@ -392,9 +381,7 @@ export class RepositoriesList extends React.Component<
   }
 
   private getGroupLabel(group: RepositoryListGroup) {
-    return group.kind === 'recent'
-      ? 'Recent'
-      : this.groupLabels.get(group.path) ?? group.path
+    return this.groupLabels.get(group.path) ?? group.path
   }
 
   private renderGroupHeader = (group: RepositoryListGroup) => {
@@ -497,8 +484,7 @@ export class RepositoriesList extends React.Component<
     const groups = this.getGroupsWithSubmodules(
       this.getRepositoryGroups(
         repositories,
-        this.props.localRepositoryStateLookup,
-        this.props.recentRepositories
+        this.props.localRepositoryStateLookup
       ),
       this.props.repositorySubmodules,
       collapsedPaths,

@@ -36,20 +36,14 @@ describe('repository list grouping', () => {
       ),
     ]
 
-    const grouped = groupRepositories(repositories, cache, [])
+    const grouped = groupRepositories(repositories, cache)
     assert.equal(grouped.length, 2)
 
-    assert.deepStrictEqual(grouped[0].identifier, {
-      kind: 'folder',
-      path: play,
-    })
+    assert.deepStrictEqual(grouped[0].identifier, { path: play })
     assert.equal(grouped[0].items.length, 1)
     assert.equal(grouped[0].items[0].repository?.path, Path.join(play, 'repo2'))
 
-    assert.deepStrictEqual(grouped[1].identifier, {
-      kind: 'folder',
-      path: work,
-    })
+    assert.deepStrictEqual(grouped[1].identifier, { path: work })
     assert.equal(grouped[1].items.length, 2)
     assert.equal(grouped[1].items[0].repository?.path, Path.join(work, 'repo1'))
     assert.equal(grouped[1].items[1].repository?.path, Path.join(work, 'repo3'))
@@ -74,25 +68,18 @@ describe('repository list grouping', () => {
 
     const grouped = groupRepositories(
       [repoC, repoB, repoZ, repoD, repoA],
-      cache,
-      []
+      cache
     )
     assert.equal(grouped.length, 2)
 
-    assert.deepStrictEqual(grouped[0].identifier, {
-      kind: 'folder',
-      path: play,
-    })
+    assert.deepStrictEqual(grouped[0].identifier, { path: play })
     let items = grouped[0].items
     assert.deepStrictEqual(
       items.map(i => i.repository?.path),
       [repoB.path, repoD.path]
     )
 
-    assert.deepStrictEqual(grouped[1].identifier, {
-      kind: 'folder',
-      path: work,
-    })
+    assert.deepStrictEqual(grouped[1].identifier, { path: work })
     items = grouped[1].items
     assert.deepStrictEqual(
       items.map(i => i.repository?.path),
@@ -161,7 +148,7 @@ describe('repository list submodules', () => {
     repositories: ReadonlyArray<Repository> = [parent]
   ) =>
     insertSubmoduleItems(
-      groupRepositories([parent], cache, []),
+      groupRepositories([parent], cache),
       submodules,
       new Set(paths.map(normalizePath)),
       repositories,
