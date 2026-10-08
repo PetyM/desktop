@@ -17,7 +17,7 @@ import {
   size,
 } from '@floating-ui/core'
 import { assertNever } from '../../lib/fatal-error'
-import { isMacOSSonoma, isMacOSVentura } from '../../lib/get-os'
+import { isMacOSSequoia, isMacOSSonoma, isMacOSVentura } from '../../lib/get-os'
 
 /**
  * Position of the popover relative to its anchor element. It's composed by 2
@@ -50,12 +50,22 @@ export enum PopoverAppearEffect {
 
 export enum PopoverDecoration {
   None = 'none',
+  Bordered = 'bordered',
   Balloon = 'balloon',
 }
 
 const TipSize = 8
 const TipCornerPadding = TipSize
 export const PopoverScreenBorderPadding = 10
+
+const hasPopoverComponentDecoration = (
+  decoration: PopoverDecoration | undefined
+) =>
+  decoration === PopoverDecoration.Balloon ||
+  decoration === PopoverDecoration.Bordered
+
+const hasPopoverTip = (decoration: PopoverDecoration | undefined) =>
+  decoration === PopoverDecoration.Balloon
 
 interface IPopoverProps {
   readonly onClickOutside?: (event?: MouseEvent) => void
@@ -76,6 +86,7 @@ interface IPopoverProps {
   readonly style?: React.CSSProperties
   readonly appearEffect?: PopoverAppearEffect
   readonly ariaLabelledby?: string
+  readonly ariaDescribedBy?: string
   readonly trapFocus?: boolean // Default: true
   readonly decoration?: PopoverDecoration // Default: none
 
@@ -95,6 +106,7 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
   private contentDivRef = React.createRef<HTMLDivElement>()
   private tipDivRef = React.createRef<HTMLDivElement>()
   private floatingCleanUp: (() => void) | null = null
+  private isUnmounted = false
 
   public constructor(props: IPopoverProps) {
     super(props)
@@ -145,7 +157,7 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
 
     const tipDiv = this.tipDivRef.current
     const extraOffset = anchorOffset ?? 0
-    const popoverOffset = decoration === PopoverDecoration.Balloon ? TipSize : 0
+    const popoverOffset = hasPopoverTip(decoration) ? TipSize : 0
 
     const middleware = [
       offset(popoverOffset + extraOffset),
@@ -153,19 +165,26 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
       flip({ padding: PopoverScreenBorderPadding }),
       size({
         apply({ availableHeight, availableWidth }) {
-          Object.assign(contentDiv.style, {
-            maxHeight:
-              maxHeight === undefined
-                ? `${availableHeight}px`
-                : `${Math.min(availableHeight, maxHeight)}px`,
-            maxWidth: `${availableWidth}px`,
-          })
+          const newMaxHeight =
+            maxHeight === undefined
+              ? `${availableHeight}px`
+              : `${Math.min(availableHeight, maxHeight)}px`
+
+          contentDiv.style.setProperty(
+            '--available-height',
+            `${newMaxHeight}px`
+          )
+
+          contentDiv.style.setProperty(
+            '--available-width',
+            `${availableWidth}px`
+          )
         },
         padding: PopoverScreenBorderPadding,
       }),
     ]
 
-    if (decoration === PopoverDecoration.Balloon && tipDiv) {
+    if (hasPopoverTip(decoration) && tipDiv) {
       middleware.push(arrow({ element: tipDiv, padding: TipCornerPadding }))
     }
 
@@ -175,10 +194,13 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
       middleware,
     })
 
-    this.setState({ position })
+    if (!this.isUnmounted) {
+      this.setState({ position })
+    }
   }
 
   public componentDidMount() {
+    this.isUnmounted = false
     document.addEventListener('click', this.onDocumentClick)
     document.addEventListener('mousedown', this.onDocumentMouseDown)
     this.setupPosition()
@@ -191,6 +213,9 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
   }
 
   public componentWillUnmount() {
+    this.isUnmounted = true
+    this.floatingCleanUp?.()
+    this.floatingCleanUp = null
     document.removeEventListener('click', this.onDocumentClick)
     document.removeEventListener('mousedown', this.onDocumentMouseDown)
   }
@@ -248,11 +273,11 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
        * hopefully, macOs will be fixed in a future release. The issue is known for
        * macOS versions 13.0 to the current version of 13.5 as of 2023-07-31. */
       return {
-        'aria-describedby': this.props.ariaLabelledby,
+        'aria-describedby': `${this.props.ariaLabelledby} ${this.props.ariaDescribedBy}`,
       }
     }
 
-    if (isMacOSSonoma()) {
+    if (isMacOSSonoma() || isMacOSSequoia()) {
       // macOS Sonoma introduced a regression in that: For role of 'dialog', the
       // aria-labelledby is not announced. However, if the dialog has a child
       // with a role of header (aka h* elemeent) it will be announced as long as
@@ -263,6 +288,7 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
     // correct semantics
     return {
       'aria-labelledby': this.props.ariaLabelledby,
+      'aria-describedby': this.props.ariaDescribedBy,
     }
   }
 
@@ -278,7 +304,7 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
       isDialog,
     } = this.props
     const cn = classNames(
-      decoration === PopoverDecoration.Balloon && 'popover-component',
+      hasPopoverComponentDecoration(decoration) && 'popover-component',
       className,
       appearEffect && `appear-${appearEffect}`
     )
@@ -351,7 +377,7 @@ export class Popover extends React.Component<IPopoverProps, IPopoverState> {
         >
           {children}
         </div>
-        {decoration === PopoverDecoration.Balloon && (
+        {hasPopoverTip(decoration) && (
           <div
             className="popover-tip"
             style={{

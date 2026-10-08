@@ -29,6 +29,20 @@ function getYarnArgs(baseArgs: Array<string>): Array<string> {
   return args
 }
 
+const captureOutputOptions: SpawnSyncOptions = {
+  cwd: root,
+  encoding: 'utf8',
+}
+
+// Some Windows CI runners do not expose an `npx` executable on PATH, so
+// invoke the locally installed Playwright CLI through the current Node binary.
+// Resolve from the exported package root since `playwright/cli` is not exported.
+const playwrightPackagePath = require.resolve('playwright/package.json')
+const playwrightCliPath = Path.join(
+  Path.dirname(playwrightPackagePath),
+  'cli.js'
+)
+
 function findYarnVersion(callback: (path: string) => void) {
   glob('vendor/yarn-*.js', (error, files) => {
     if (error != null) {
@@ -52,6 +66,16 @@ findYarnVersion(path => {
     process.exit(result.status || 1)
   }
 
+  // Electron >= 42 no longer downloads its prebuilt binary in its own
+  // postinstall; do it eagerly so scripts that read node_modules/electron/dist
+  // (e.g. validate-macos-version) keep working without first requiring electron.
+  const electronInstallScript = require.resolve('electron/install.js')
+  result = spawnSync(process.execPath, [electronInstallScript], options)
+
+  if (result.status !== 0) {
+    process.exit(result.status || 1)
+  }
+
   if (!isOffline()) {
     result = spawnSync(
       'git',
@@ -64,17 +88,36 @@ findYarnVersion(path => {
     }
   }
 
-  result = spawnSync('node', getYarnArgs([path, 'compile:script']), options)
-
-  if (result.status !== 0) {
-    process.exit(result.status || 1)
-  }
-
   if (process.platform === 'linux') {
     result = spawnSync('node', getYarnArgs([path, 'patch-package']), options)
 
     if (result.status !== 0) {
       process.exit(result.status || 1)
     }
+  }
+
+  // Capture output here so CI failures include the Playwright-specific error.
+  result = spawnSync(
+    process.execPath,
+    [playwrightCliPath, 'install', 'ffmpeg'],
+    captureOutputOptions
+  )
+
+  if (result.status !== 0) {
+    console.error(
+      'Error: failed to install Playwright ffmpeg (video recording may not work)',
+      '\nplatform:',
+      process.platform,
+      '\nstatus:',
+      result.status,
+      '\nsignal:',
+      result.signal,
+      '\nerror:',
+      result.error,
+      '\nstdout:',
+      result.stdout,
+      '\nstderr:',
+      result.stderr
+    )
   }
 })

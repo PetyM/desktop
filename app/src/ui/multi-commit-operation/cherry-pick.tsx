@@ -15,8 +15,13 @@ export abstract class CherryPick extends BaseMultiCommitOperation {
       this.props
     const { operationDetail, targetBranch } = state
 
+    // Conflicts were resolved externally — nothing left to continue.
+    if (conflictState === null) {
+      this.onFlowEnded()
+      return
+    }
+
     if (
-      conflictState === null ||
       operationDetail.kind !== MultiCommitOperationKind.CherryPick ||
       targetBranch === null
     ) {
@@ -79,6 +84,7 @@ export abstract class CherryPick extends BaseMultiCommitOperation {
     return (
       <ChooseTargetBranchDialog
         key="choose-target-branch"
+        repository={this.props.repository}
         allBranches={allBranches}
         defaultBranch={defaultBranch}
         recentBranches={recentBranches}
